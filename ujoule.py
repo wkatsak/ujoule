@@ -48,10 +48,10 @@ logging.basicConfig(filename="ujoule.log", level=logging.INFO, format='%(asctime
 class uJouleController(object):
 	def __init__(self, device="/dev/zwave", options=None):
 		self.logger = logging.getLogger("uJouleController")
-		
+
 		# table for sensors to register their callbacks in
 		self.valueCallbackTable = {}
-		
+
 		# openzwave configuration
 		if options != None:
 			self.options = options
@@ -69,19 +69,19 @@ class uJouleController(object):
 			options.set_associate(True)
 			options.lock()
 			self.options = options
-		
+
 		# we have this weird thing where we get two updates from multisensor
 		# lets keep a table of update times and and discard the second one within
 		# one second
 		self.lastUpdateTimes = {}
-		
+
 		# condition variable for ready
 		self.readyCondition = Condition()
 		self.readyFlag = False
-		
+
 		# data sources
 		self.dataSources = []
-		
+
 	# start the stop the zwave network
 	def start(self):
 		#Create a network object
@@ -94,13 +94,13 @@ class uJouleController(object):
 
 		# start the network
 		self.network.start()
-	
+
 	def stop(self):
-		pass
-	
+		self.network.stop()
+
 	def registerDataSource(self, dataSource):
 		self.dataSources.append(dataSource)
-	
+
 	# sleeps until ready
 	def ready(self):
 		self.logger.info("Waiting for network to be ready")
@@ -120,53 +120,46 @@ class uJouleController(object):
 	
 	def louie_network_ready(self, network):
 		self.logger.info("Network ready, %d nodes found, controller is %s" % (network.nodes_count, network.controller))
-		
+
 		# register callbacks for node and value updates
 		dispatcher.connect(self.louie_node_update, ZWaveNetwork.SIGNAL_NODE)
 		self.logger.debug("Registered callback for SIGNAL_NODE")
 		
 		dispatcher.connect(self.louie_value_update, ZWaveNetwork.SIGNAL_VALUE)
 		self.logger.debug("Registered callback for SIGNAL_VALUE")
-		
+
 		# signal the ready condition
 		self.readyCondition.acquire()
 		self.readyFlag = True
 		self.readyCondition.notify()
-		self.readyCondition.release()	
+		self.readyCondition.release()
+
+		# start the data sources
+		for dataSource in self.dataSources:
+			dataSource.start(self.network)
 
 	def louie_node_update(self, network, node):
-		self.logger.info("Received update from node: %s" % node)
+		self.logger.debug("Received update from node: %s" % node)
 
 	# this one is important, it needs to relay the values received from
 	# zwave network to their associated objects
 	def louie_value_update(self, network, node, value):	
 		# short circuit if we received a duplicate within 1 second
 		if value in self.lastUpdateTimes and (datetime.now() - self.lastUpdateTimes[value]) < timedelta(seconds=1):
-			self.logger.info("Dropped duplicate value: %s" % value)
+			self.logger.debug("Dropped duplicate value: %s" % value)
 			return
-		
+
 		# otherwise, process as normal
 		self.lastUpdateTimes[value] = datetime.now()
-		self.logger.info("Received value: %s" % value)
+		self.logger.debug("Received value: %s" % value)
 		
 		for dataSource in self.dataSources:
 			if node.node_id == dataSource.getNodeId():
-				valueFuncs = dataSource.getValueFuncs()
-				for valueFuncKey in valueFuncs:
-					if value.label == valueFuncKey:
-						try:
-							valueFuncs[valueFuncKey](value.data)
-						except Exception as e:
-							self.logger.info("Exception calling func: %s" % e)
-							
-						return
-
-#from IPython import embed
-#embed()
-#network.stop()
-#sys.exit()
+				# pass the entire ZWaveValue object
+				dataSource.valueUpdate(value)
 
 def sigint(signum, other):
+	print "SIGINT"
 	controller.stop()
 	sys.exit()
 
@@ -179,10 +172,13 @@ if __name__ == "__main__":
 	
 	controller.registerDataSource(multisensor)
 	controller.registerDataSource(thermostat)
-	
+
 	controller.start()
 	controller.ready()
 
-	print "Starting loop"
-	while True:
-		time.sleep(60.0)
+	print "Entering shell..."
+	from IPython import embed
+	embed()
+
+	controller.stop()
+	sys.exit()
