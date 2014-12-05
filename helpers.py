@@ -8,7 +8,7 @@ def unix_ts(dt):
 	epoch = datetime(month=1, day=1, year=1970)
 	return int((dt - epoch).total_seconds())
 
-class ujouleMessage(object)
+class ujouleMessage(object):
 	SHUTDOWN_QUEUE = 0
 	SENSOR_UPDATE = 1
 	

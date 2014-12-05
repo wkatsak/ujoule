@@ -1,136 +1,145 @@
 #!/usr/bin/python
 
 import logging
+import openzwave
+
 from helpers import unix_ts
 from threading import Lock
 from datetime import datetime, timedelta
+from openzwave.node import ZWaveNode
+from openzwave.value import ZWaveValue
 
-class ZWaveDataSource(object):
+class ujouleZWaveNode(object):
 	
-	def __init__(self, nodeId, description):
+	def __init__(self, nodeId, description=None):
 		self.nodeId = nodeId
 		self.description = description
+		
+		self.isActivated = False
+		self.logger = logging.getLogger("node-%d" % nodeId)
+		self.transforms = {} # indexed by Id
+		self.updateTimes = {} # indexed by Id
+		self.zwaveValuesById = {}
+		self.zwaveValuesByLabel = {}
+			
+	# methods should call this to ensure activation
+	def checkActivation(self):
+		if not self.isActivated:
+			raise Exception("Node %d is not yet activated..." % self.nodeId)
 	
-	def getNodeId(self):
-		return self.nodeId
+	def valueException(self, label, value_id, message):
+		raise Exception("Value (label=%s, value_id=%s): %s" % (str(label), str(value_id), message))
 	
-	def getDescription(self):
-		return self.description
+	# controller will call this when registered
+	def activate(self, zwaveNetwork, zwaveNode):
+		self.logger.info("activated")
+		
+		self.zwaveNode = zwaveNode
+		for value_id in zwaveNode.get_values():
+			value = ZWaveValue(value_id, zwaveNetwork, zwaveNode)
+			self.zwaveValuesById[value_id] = value
+			self.zwaveValuesByLabel[value.label] = value
+			self.logger.info("value: %s" % value)
+		
+		self.activated()
+		
+		self.isActivated = True
 	
-	def start(self, network):
+	# called when activated. subclasses can use to register overrides
+	# or set up polling, etc.
+	def activated(self):
 		pass
 	
-	# value will be a ZWaveValue object
-	def valueUpdate(self, value):
-		pass
+	def valueUpdate(self, zwaveValue):
+		self.logger.info("received update: value_id %s, label %s, raw data %s, transformed data: %s" % (zwaveValue.value_id, zwaveValue.label, zwaveValue.data, self.getData(value_id=zwaveValue.value_id)))
+		self.updateTimes[zwaveValue.value_id] = datetime.now()
+		
+	def getOrValidateValueId(self, label=None, value_id=None):
+		if label == None and value_id == None:
+			self.valueException(label, value_id, "Need to specify either label or id")
+		
+		if label != None:
+			try:
+				zwaveValue = self.zwaveValuesByLabel[label]
+			except KeyError:
+				self.valueException(label, value_id, "Invalid label")
+			
+			value_id = zwaveValue.value_id
+		
+		
+		elif value_id != None:
+			try:
+				zwaveValue = self.zwaveValuesById[value_id]
+			except KeyError:
+				self.valueException(label, value_id, "Invalid value_id")
+		
+		return value_id
+	
+	def getZwaveValue(self, label=None, value_id=None):
+		value_id = self.getOrValidateValueId(label=label, value_id=value_id)
+		zwaveValue = self.zwaveValuesById[value_id]
+		return zwaveValue
+	
+	def registerTransform(self, func, label=None, value_id=None):
+		target_id = self.getOrValidateValueId(label=label, value_id=value_id)
+		self.transforms[target_id] = func
+		
+	def getData(self, label=None, value_id=None):
+		target_id = self.getOrValidateValueId(label=label, value_id=value_id)
+		zwaveValue = self.zwaveValuesById[target_id]
+		
+		if zwaveValue.is_write_only:
+			self.valueException(label, value_id, "Write only value")
+		
+		# here the target_id will be set
+		# check for a transform
+		if zwaveValue.value_id in self.transforms:
+			return self.transforms[zwaveValue.value_id](zwaveValue.data)
+		# if no transform, just return the data
+		else:
+			return zwaveValue.data
+	
+	def setData(self, data, label=None, value_id=None):
+		target_id = self.getOrValidateValueId(label=label, value_id=value_id)
+		zwaveValue = self.zwaveValuesById[target_id]
+	
+		if zwaveValue.is_read_only:
+			self.valueException(label, value_id, "Read only value")
+		
+		zwaveValue.data = data
+		
+	def getLastUpdateTime(self, label=None, value_id=None):
+		target_id = self.getOrValidateValueId(label=label, value_id=value_id)
+		try:
+			updateTime = self.updateTimes[target_id]
+		except KeyError:
+			self.valueException(label, value_id, "Value never updated")
 
-class Multisensor(ZWaveDataSource):
+class Multisensor(ujouleZWaveNode):
 	def __init__(self, nodeId, description=None, tempCorrection=3.0):
 		super(Multisensor, self).__init__(nodeId, description)
-		
-		self.logger = logging.getLogger("Multisensor-%d" % nodeId)
 		self.tempCorrection = tempCorrection
-		self.battery = float("NaN")
-		self.temperature = float("NaN")
-		self.humdity = float("NaN")
-		self.luminance = float("NaN")
-		self.motion = False
+	
+	def activated(self):
+		self.logger.info("Activated multisensor-%d" % self.nodeId)
 		
-		#self.outfile = open("multisensor.out", "w")
+		self.registerTransform(self.correctTemperature, label="Temperature")
+		self.setData(225, label="Group 1 Reports")
+		self.setData(240, label="Group 1 Interval")
 
-	def start(self, network):
-		self.network = network
-		
-	def valueUpdate(self, value):
-		if value.label == "Battery":
-			self.logger.info("Received update for Battery: %0.2f" % value.data)
-			self.setBattery(value.data)
-			return True
-		elif value.label == "Temperature":
-			self.logger.info("Received update for Temperature: %0.2f" % value.data)
-			self.setTemperature(value.data)
-			return True
-		elif value.label == "Humidity":
-			self.logger.info("Received update for Humidity: %0.2f" % value.data)
-			self.setHumidity(value.data)
-			return True
-		elif value.label == "Luminance":
-			self.logger.info("Received update for Luminance: %0.2f" % value.data)
-			self.setLuminance(value.data)
-			return True
-		elif value.label == "Motion":
-			self.logger.info("Received update for Motion: %s" % str(value.data))
-			self.setMotion(value.data)
-			return True
-		else:
-			return False
-		
-	def getBattery(self):
-		return self.battery
-	
-	def getTemperature(self):
-		return self.temperature
-	
-	def getHumidity(self):
-		return self.humdity
-	
-	def getLuminance(self):
-		return self.luminance
-	
-	def getMotion(self):
-		return self.motion
+	def correctTemperature(self, temperature):
+		corrected = temperature + self.tempCorrection
+		corrected = round(corrected, 1)
+		return corrected
 
-	def setBattery(self, value):
-		self.battery = value
-	
-	# we know the temperature on this sensor is weird, so we need to correct
-	# otherwise, use raw value rounded to tenth place
-	def setTemperature(self, value):
-		corrected = value + self.tempCorrection
-		#self.temperature = round(corrected * 2.0)/2.0
-		self.temperature = round(corrected, 1)
-		#now = datetime.now()
-		#string = "%d %0.2f %0.2f\n" % (unix_ts(now), self.temperature, value)
-		#print now, self.temperature, value, "multisensor"
-		#self.outfile.write(string)
-		#self.outfile.flush()
-	
-	def setHumidity(self, value):
-		self.humidity = value
-	
-	def setLuminance(self, value):
-		self.luminance = value
-	
-	def setMotion(self, value):
-		self.motion = value
-
-class Thermostat(ZWaveDataSource):
+class Thermostat(ujouleZWaveNode):
 	def __init__(self, nodeId, description=None):
 		super(Thermostat, self).__init__(nodeId, description)
-
-		self.logger = logging.getLogger("Thermostat-%d" % nodeId)
-		#self.outfile = open("thermostat.out", "w")
 	
-	def start(self, network):
-		self.network = network
-	
-	def valueUpdate(self, value):
-		if value.label == "Temperature":
-			self.setTemperature(value.data)
-			self.logger.info("Received update for Temperature: %0.2f" % value.data)
-			return True
-		else:
-			return False
-		
-	def getTemperature(self):
-		return self.temperature
-	
-	def setTemperature(self, value):
-		self.temperature = value
-			
-		#now = datetime.now()
-		#string = "%d %0.2f\n" % (unix_ts(now), self.temperature)
-		#print now, self.temperature, "thermostat"
-			
-		#self.outfile.write(string)
-		#self.outfile.flush()
+	def activated(self):
+		self.logger.info("Activated thermostat-%d" % self.nodeId)
+		self.getZwaveValue(label="Temperature").enable_poll(intensity=1)
+		self.getZwaveValue(label="Fan State").enable_poll(intensity=1)
+		self.getZwaveValue(label="Fan Mode").enable_poll(intensity=1)
+		self.getZwaveValue(label="Heating 1").enable_poll(intensity=1)
+		self.getZwaveValue(label="Cooling 1").enable_poll(intensity=1)
