@@ -143,3 +143,5 @@ class Thermostat(ujouleZWaveNode):
 		self.getZwaveValue(label="Fan Mode").enable_poll(intensity=1)
 		self.getZwaveValue(label="Heating 1").enable_poll(intensity=1)
 		self.getZwaveValue(label="Cooling 1").enable_poll(intensity=1)
+		self.getZwaveValue(label="Operating State").enable_poll(intensity=1)
+		self.getZwaveValue(label="Mode").enable_poll(intensity=1)
