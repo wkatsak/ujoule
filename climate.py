@@ -159,6 +159,15 @@ class iCloudAwayDetector(AwayDetector):
 		self.username = username
 		self.password = password
 		self.threshold = threshold
+		
+		self.initConnection()
+
+		self.currentDistance = self.getDistance()
+		t = Thread(target=self.checkThread)
+		t.daemon = True
+		t.start()
+
+	def initConnection(self):
 		self.api = PyiCloudService(self.username, self.password)
 		self.iphone = None
 
@@ -166,11 +175,6 @@ class iCloudAwayDetector(AwayDetector):
 			if device.data["deviceClass"] == "iPhone":
 				self.iphone = device
 				break
-
-		self.currentDistance = self.getDistance()
-		t = Thread(target=self.checkThread)
-		t.daemon = True
-		t.start()
 
 	# From: http://www.johndcook.com/blog/python_longitude_latitude/
 	def distance_on_unit_sphere(self, lat1, long1, lat2, long2):
@@ -208,10 +212,15 @@ class iCloudAwayDetector(AwayDetector):
 				self.currentDistance = self.getDistance()
 			except Exception as e:
 				print "Exception getting distance:", e
+				print "Resetting connection..."
+				self.initConnection()
 
 			time.sleep(120)
 
 	def getDistance(self):
+		if not self.iphone:
+			return -1.0
+
 		location = self.iphone.location()
 		distance = self.distance_on_unit_sphere(self.homeLat, self.homeLong, location["latitude"], location["longitude"])
 		return distance
