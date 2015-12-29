@@ -1,10 +1,14 @@
 import sys
 import time
+import math
 import numpy
 from datetime import datetime
 from datetime import timedelta
 from datetime import time as dt_time
 from threading import Thread
+from pyicloud import PyiCloudService
+
+import urllib3
 
 class TemperatureSource(object):
 	
@@ -103,7 +107,12 @@ class SimplePolicy(Policy):
 	def execute(self):
 		referenceTemp = self.getReferenceTemp()
 		print "Reference temp is %0.2f" % referenceTemp
-		threshold = self.controller.setpoint - 1.0
+
+		if not self.controller.away():
+			threshold = self.controller.setpoint - 1.0
+		else:
+			print "Everyone away, we don't care!"
+			threshold = 60.0
 
 		if referenceTemp <= threshold and not self.wasHeating:
 			print "Need heat!"
@@ -117,7 +126,7 @@ class SimplePolicy(Policy):
 			print "Hit target, heat off!"
 			self.controller.thermostat.setHeatOn(False)
 			self.wasHeating = False
-			self.extraFanCycles = 2
+			self.extraFanCycles = 3
 
 		elif referenceTemp > threshold and self.wasFanOn:
 			self.extraFanCycles -= 1
@@ -141,8 +150,80 @@ class AwayDetector(object):
 		pass
 
 class iCloudAwayDetector(AwayDetector):
-	def __init__(self, username, password):
-		pass
+	homeLat = 40.435311
+	homeLong = -74.496817
+
+	def __init__(self, username, password, threshold=3.0):
+		#urllib3.disable_warnings()
+
+		self.username = username
+		self.password = password
+		self.threshold = threshold
+		self.api = PyiCloudService(self.username, self.password)
+		self.iphone = None
+
+		for device in self.api.devices:
+			if device.data["deviceClass"] == "iPhone":
+				self.iphone = device
+				break
+
+		self.currentDistance = self.getDistance()
+		t = Thread(target=self.checkThread)
+		t.daemon = True
+		t.start()
+
+	# From: http://www.johndcook.com/blog/python_longitude_latitude/
+	def distance_on_unit_sphere(self, lat1, long1, lat2, long2):
+	    # Convert latitude and longitude to
+	    # spherical coordinates in radians.
+	    degrees_to_radians = math.pi/180.0
+
+	    # phi = 90 - latitude
+	    phi1 = (90.0 - lat1)*degrees_to_radians
+	    phi2 = (90.0 - lat2)*degrees_to_radians
+
+	    # theta = longitude
+	    theta1 = long1*degrees_to_radians
+	    theta2 = long2*degrees_to_radians
+
+	    # Compute spherical distance from spherical coordinates.
+
+	    # For two locations in spherical coordinates
+	    # (1, theta, phi) and (1, theta', phi')
+	    # cosine( arc length ) =
+	    #    sin phi sin phi' cos(theta-theta') + cos phi cos phi'
+	    # distance = rho * arc length
+
+	    cos = (math.sin(phi1)*math.sin(phi2)*math.cos(theta1 - theta2) +
+	           math.cos(phi1)*math.cos(phi2))
+	    arc = math.acos( cos )
+
+	    # Remember to multiply arc by the radius of the earth
+	    # in your favorite set of units to get length.
+	    return arc * 3959.0
+
+	def checkThread(self):
+		while True:
+			try:
+				self.currentDistance = self.getDistance()
+			except Exception as e:
+				print "Exception getting distance:", e
+
+			time.sleep(120)
+
+	def getDistance(self):
+		location = self.iphone.location()
+		distance = self.distance_on_unit_sphere(self.homeLat, self.homeLong, location["latitude"], location["longitude"])
+		return distance
+
+	def distance(self):
+		return self.currentDistance
+
+	def isAway(self):
+		if self.currentDistance > self.threshold:
+			return True
+		else:
+			return False
 
 class ClimateController(object):
 	# sensors is a dictionary by location
@@ -152,6 +233,7 @@ class ClimateController(object):
 		self.policies = {}
 		if defaultPolicy == None:
 			self.defaultPolicy = SimplePolicy(self)
+		self.awayDetectors = {}
 		self.setpoint = setpoint
 		self.keepLooping = True
 
@@ -167,6 +249,11 @@ class ClimateController(object):
 
 			print "Sensor Mean:\t\t%0.2f F" % numpy.mean(readings)
 			print "Sensor StdDev:\t\t%0.2f F" % numpy.std(readings)
+
+			for name in self.awayDetectors:
+				detector = self.awayDetectors[name]
+				print "Away Detector (%s):\t%s (%0.2f mi)" % (name, "Away" if detector.isAway() else "Home", detector.distance())
+
 			print "Setpoint:\t\t%0.2f F" % self.setpoint
 			#print "Target:\t\t\t%0.2f F" % self.thermostat.getTarget()
 			print "Fan Mode:\t\t%s" % ("Always" if self.thermostat.getFanOn() else "Auto")
@@ -187,6 +274,14 @@ class ClimateController(object):
 				self.setpoint = temp
 			else:
 				print "invalid command for \"setpoint\""
+
+		elif cmd == "heat":
+			if len(args) >= 1 and args[0] == "on":
+				self.thermostat.setHeatOn(True)
+			elif len(args) >= 1 and args[0] == "off":
+				self.thermostat.setHeatOn(False)
+			else:
+				print "invalid command for \"heat\""
 
 		elif cmd == "exit":
 			self.stop()
@@ -228,6 +323,17 @@ class ClimateController(object):
 
 	def addPolicy(self, policy, times=None):
 		self.policies[times] = policy
+
+	def addAwayDetector(self, name, detector):
+		self.awayDetectors[name] = detector
+
+	def away(self):
+		for name in self.awayDetectors:
+			detector = self.awayDetectors[name]
+			if not detector.isAway():
+				return False
+
+		return True
 
 	def loop(self):
 		print "Started main loop..."

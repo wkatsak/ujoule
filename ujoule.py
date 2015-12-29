@@ -21,7 +21,7 @@ from openzwave.group import ZWaveGroup
 from louie import dispatcher, All
 
 from structures import ZWaveMultisensor, ZWaveThermostat, ujouleZWaveNode
-from climate import ClimateController, Thermostat, TemperatureSensor, SimplePolicy, BedtimePolicy
+from climate import ClimateController, Thermostat, TemperatureSensor, SimplePolicy, BedtimePolicy, iCloudAwayDetector
 CONTROLLER_ID = 1
 THERMOSTAT_ID = 2
 BEDROOM_SENSOR_ID = 3
@@ -197,8 +197,15 @@ if __name__ == "__main__":
 		"livingroom" : thermostat,
 	}
 	climateController = ClimateController(thermostat, sensors)
+
 	bedtimePolicy = BedtimePolicy(climateController)
 	climateController.addPolicy(bedtimePolicy, (time(hour=17, minute=45), time(hour=7)))
+
+	billDetector = iCloudAwayDetector("wkatsak@cs.rutgers.edu", "Bill1085")
+	firuzaDetector = iCloudAwayDetector("firuzaa8@gmail.com", "Bill1085")
+	climateController.addAwayDetector("Bill", billDetector)
+	climateController.addAwayDetector("Firuza", firuzaDetector)
+
 	climateController.start()
 	climateController.shell()
 
