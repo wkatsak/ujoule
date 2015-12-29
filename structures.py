@@ -39,7 +39,7 @@ class ujouleZWaveNode(object):
 			self.zwaveValuesById[value_id] = value
 			self.zwaveValuesByIndex[value.index] = value
 			self.zwaveValuesByLabel[value.label] = value
-			self.logger.info("value: %s" % value)
+			#self.logger.info("value: %s" % value)
 		
 		self.activated()
 		
@@ -61,7 +61,7 @@ class ujouleZWaveNode(object):
 			f.write("%d %s\n" % (unixTimeNow, str(self.getRawData(zwaveValue.value_id))))
 
 	def valueUpdate(self, zwaveValue):
-		self.logger.info("received update: node_id: %s, value_id %s, label %s, index=%s, raw data %s, transformed data: %s" % (self.nodeId, zwaveValue.value_id, zwaveValue.label, zwaveValue.index, zwaveValue.data, self.getData(value_id=zwaveValue.value_id)))
+		self.logger.debug("received update: node_id: %s, value_id %s, label %s, index=%s, raw data %s, transformed data: %s" % (self.nodeId, zwaveValue.value_id, zwaveValue.label, zwaveValue.index, zwaveValue.data, self.getData(value_id=zwaveValue.value_id)))
 		self.updateTimes[zwaveValue.value_id] = datetime.now()
 		self.logValue(zwaveValue)
 
@@ -135,9 +135,9 @@ class ujouleZWaveNode(object):
 		except KeyError:
 			self.valueException("Value never updated", value_id=value_id)
 
-class Multisensor(ujouleZWaveNode):
+class ZWaveMultisensor(ujouleZWaveNode):
 	def __init__(self, nodeId, description=None, tempCorrection=3.0):
-		super(Multisensor, self).__init__(nodeId, description)
+		super(ZWaveMultisensor, self).__init__(nodeId, description)
 		self.tempCorrection = tempCorrection
 	
 	def activated(self):
@@ -158,19 +158,20 @@ class Multisensor(ujouleZWaveNode):
 
 	def correctTemperature(self, temperature):
 		corrected = temperature + self.tempCorrection
-		corrected = round(corrected, 1)
+		#corrected = round(corrected, 5)
+		corrected = (int(corrected*10.0) -(int(corrected*10.0) % 5)) / 10.0
 		return corrected
 
-class Thermostat(ujouleZWaveNode):
+class ZWaveThermostat(ujouleZWaveNode):
 	def __init__(self, nodeId, description=None):
-		super(Thermostat, self).__init__(nodeId, description)
+		super(ZWaveThermostat, self).__init__(nodeId, description)
 	
 	def activated(self):
 		self.logger.info("Activated thermostat-%d" % self.nodeId)
 		self.getZwaveValue(self.getValueId(label="Temperature")).enable_poll(intensity=4)
 		self.getZwaveValue(self.getValueId(label="Heating 1")).enable_poll(intensity=4)
 		self.getZwaveValue(self.getValueId(label="Cooling 1")).enable_poll(intensity=4)
-		#self.getValueId(label="Fan State").enable_poll(intensity=4)
-		#self.getValueId(label="Fan Mode").enable_poll(intensity=4)
-		#self.getValueId(label="Operating State").enable_poll(intensity=4)
-		#self.getValueId(label="Mode").enable_poll(intensity=4)
+		self.getZwaveValue(self.getValueId(label="Fan State")).enable_poll(intensity=4)
+		self.getZwaveValue(self.getValueId(label="Fan Mode")).enable_poll(intensity=4)
+		self.getZwaveValue(self.getValueId(label="Operating State")).enable_poll(intensity=4)
+		self.getZwaveValue(self.getValueId(label="Mode")).enable_poll(intensity=4)

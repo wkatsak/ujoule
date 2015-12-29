@@ -7,7 +7,7 @@ import time
 import argparse
 import traceback
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from threading import Lock, Condition
 
 import openzwave
@@ -20,12 +20,12 @@ from openzwave.option import ZWaveOption
 from openzwave.group import ZWaveGroup
 from louie import dispatcher, All
 
-from structures import Multisensor, Thermostat, ujouleZWaveNode
-
+from structures import ZWaveMultisensor, ZWaveThermostat, ujouleZWaveNode
+from climate import ClimateController, Thermostat, TemperatureSensor, SimplePolicy, BedtimePolicy
 CONTROLLER_ID = 1
 THERMOSTAT_ID = 2
-SENSOR_ID = 3
-SENSOR2_ID = 4
+BEDROOM_SENSOR_ID = 3
+OFFICE_SENSOR_ID = 4
 
 # TODO: need some way to set parameters like polling, etc. from objects
 #CONTROLLER_NODE = network.nodes[CONTROLLER_ID]
@@ -147,7 +147,8 @@ class uJouleController(object):
 		self.readyCondition.release()
 
 	def louie_node_update(self, network, node):
-		self.logger.debug("Received update from node: %s" % node)
+		#self.logger.debug("Received update from node: %s" % node)
+		pass
 
 	# this one is important, it needs to relay the fact that a value was updated
 	# from the zwave network to their associated objects
@@ -173,26 +174,37 @@ class uJouleController(object):
 def sigint(signum, other):
 	print "SIGINT"
 	controller.stop()
-	sys.exit()
+	#sys.exit()
 
 if __name__ == "__main__":
 	signal.signal(signal.SIGINT, sigint)
 
 	controller = uJouleController()
 
-	multisensor = Multisensor(SENSOR_ID, tempCorrection=0.0)
-	multisensor2 = Multisensor(SENSOR2_ID, tempCorrection=0.0)
-	thermostat = Thermostat(THERMOSTAT_ID)
-	controller.registerNode(multisensor)
-	controller.registerNode(multisensor2)
-	controller.registerNode(thermostat)
-
+	zwaveMultisensorBedroom = ZWaveMultisensor(BEDROOM_SENSOR_ID, tempCorrection=0.0)
+	zwaveMultisensorOffice = ZWaveMultisensor(OFFICE_SENSOR_ID, tempCorrection=0.0)
+	zwaveThermostat = ZWaveThermostat(THERMOSTAT_ID)
+	controller.registerNode(zwaveThermostat)
+	controller.registerNode(zwaveMultisensorBedroom)
+	controller.registerNode(zwaveMultisensorOffice)
 	controller.start()
 	controller.ready()
 
-	print "Entering shell..."
-	from IPython import embed
-	embed()
+	thermostat = Thermostat(zwaveThermostat)
+	sensors = {
+		"bedroom" : TemperatureSensor(zwaveMultisensorBedroom),
+		"office" : TemperatureSensor(zwaveMultisensorOffice),
+		"livingroom" : thermostat,
+	}
+	climateController = ClimateController(thermostat, sensors)
+	bedtimePolicy = BedtimePolicy(climateController)
+	climateController.addPolicy(bedtimePolicy, (time(hour=17, minute=45), time(hour=7)))
+	climateController.start()
+	climateController.shell()
+
+	#print "Entering shell..."
+	#from IPython import embed
+	#embed()
 
 	controller.stop()
 	sys.exit()
