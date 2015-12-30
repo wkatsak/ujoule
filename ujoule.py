@@ -27,22 +27,10 @@ THERMOSTAT_ID = 2
 BEDROOM_SENSOR_ID = 3
 OFFICE_SENSOR_ID = 4
 
-# TODO: need some way to set parameters like polling, etc. from objects
-#CONTROLLER_NODE = network.nodes[CONTROLLER_ID]
-#THERMOSTAT_NODE = network.nodes[THERMOSTAT_ID]
-#SENSOR_NODE = network.nodes[SENSOR_ID]
-#SENSOR_REFRESH_INTERVAL_ID = 72057594081707763 # how often to send (should be 240)
-#SENSOR_REFRESH_REPORTS_ID = 72057594081707603  # what to send (should be 225)
-#THERMOSTAT_TEMPERATURE_ID = 72057594076479506  # value to get temperature
-#SENSOR_TEMPERATURE_ID = 72057594093256722      # value to get temperature
-#thermostatTemperatureValue = ZWaveValue(THERMOSTAT_TEMPERATURE_ID, network, THERMOSTAT_NODE)
-#thermostatTemperatureValue.enable_poll(intensity=1)
-#sensorRefreshIntervalValue = ZWaveValue(SENSOR_REFRESH_INTERVAL_ID, network, SENSOR_NODE)
-#sensorRefreshReportsValue = ZWaveValue(SENSOR_REFRESH_REPORTS_ID, network, SENSOR_NODE)
-
 # configure logger basics
 logging.basicConfig(filename="ujoule.log", level=logging.INFO, format='%(asctime)s %(name)s %(levelname)s: %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
-logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
+# don't print messages to screen
+#logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
 
 # this should encapsulate everything
 # roles are monitoring anything zwave (done by class objects representing the sensors)
@@ -147,7 +135,7 @@ class uJouleController(object):
 		self.readyCondition.release()
 
 	def louie_node_update(self, network, node):
-		#self.logger.debug("Received update from node: %s" % node)
+		self.logger.debug("Received update from node: %s" % node)
 		pass
 
 	# this one is important, it needs to relay the fact that a value was updated
@@ -174,7 +162,7 @@ class uJouleController(object):
 def sigint(signum, other):
 	print "SIGINT"
 	controller.stop()
-	#sys.exit()
+	sys.exit()
 
 if __name__ == "__main__":
 	signal.signal(signal.SIGINT, sigint)
@@ -209,10 +197,6 @@ if __name__ == "__main__":
 
 	climateController.start()
 	climateController.shell()
-
-	#print "Entering shell..."
-	#from IPython import embed
-	#embed()
 
 	controller.stop()
 	sys.exit()

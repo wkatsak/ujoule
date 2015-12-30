@@ -1,22 +1,23 @@
+#!/usr/bin/python
+
+import logging
 import sys
 import time
 import math
 import numpy
+import urllib2
+import json
 from datetime import datetime
 from datetime import timedelta
 from datetime import time as dt_time
 from threading import Thread
 from pyicloud import PyiCloudService
-import urllib2
-import json
 
 class TemperatureSource(object):
-	
 	def getTemperature(self):
-		return 7.0
+		return float("nan")
 
 class Thermostat(TemperatureSource):
-	
 	def __init__(self, ujouleZWaveNode):
 		self.ujouleZWaveNode = ujouleZWaveNode
 
@@ -97,6 +98,7 @@ class WeatherUndergroundTemperature(TemperatureSource):
 		t = Thread(target=self.checkThread)
 		t.daemon = True
 		t.start()
+		self.logger = logging.getLogger("WeatherUndergroundTemperature")
 
 	def getTemperature(self):
 		return self.temperature
@@ -114,7 +116,7 @@ class WeatherUndergroundTemperature(TemperatureSource):
 				self.temperature = temp_f
 
 			except Exception as e:
-				print "Exception getting temperature from weather underground:", e
+				self.logger.error("Exception getting temperature from weather underground: %s" % str(e))
 				self.temperature = float("nan")
 
 			time.sleep(120)
@@ -125,6 +127,7 @@ class Policy(object):
 		self.wasHeating = False
 		self.wasFanOn = False
 		self.extraFanCycles = 0
+		self.logger = logging.getLogger("Policy")
 
 	def getReferenceTemp(self):
 		temps = []
@@ -138,18 +141,20 @@ class Policy(object):
 		pass
 
 class SimplePolicy(Policy):
+	awayThreshold = 60.0
+
 	def execute(self):
 		referenceTemp = self.getReferenceTemp()
-		print "Reference temp is %0.2f" % referenceTemp
+		self.logger.info("policy: reference temp is %0.2f" % referenceTemp)
 
 		if not self.controller.away():
 			threshold = self.controller.setpoint - 1.0
 		else:
-			print "Everyone away, we don't care!"
-			threshold = 60.0
+			self.logger.info("policy: everyone away, set threshold to %0.2f F" % self.awayThreshold)
+			threshold = awayThreshold
 
 		if referenceTemp <= threshold and not self.wasHeating:
-			print "Need heat!"
+			self.logger.info("policy: need heat")
 			self.controller.thermostat.setHeatOn(True)
 			self.controller.thermostat.setFanOn(True)
 			self.controller.thermostat.setTarget(80.0)
@@ -157,20 +162,20 @@ class SimplePolicy(Policy):
 			self.wasFanOn = True
 
 		elif referenceTemp > threshold and self.wasHeating:
-			print "Hit target, heat off!"
+			self.logger.info("policy: hit target, heat off")
 			self.controller.thermostat.setHeatOn(False)
 			self.wasHeating = False
 			self.extraFanCycles = 3
 
 		elif referenceTemp > threshold and self.wasFanOn:
 			self.extraFanCycles -= 1
-			print "Extra fan minus one (extraFanCycles=%d)" % self.extraFanCycles
+			self.logger.info("policy: extra fan minus one (extraFanCycles=%d)" % self.extraFanCycles)
 			if self.extraFanCycles == 0:
-				print "Extra fan off!"
+				self.logger.info("policy: extra fan off")
 				self.controller.thermostat.setFanOn(False)
 				self.wasFanOn = False
 		else:
-			print "No op!"
+			self.logger.info("policy: noop")
 
 class BedtimePolicy(SimplePolicy):
 	def execute(self):
@@ -200,6 +205,8 @@ class iCloudAwayDetector(AwayDetector):
 		t = Thread(target=self.checkThread)
 		t.daemon = True
 		t.start()
+
+		self.logger = logging.getLogger("iCloudAwayDetector")
 
 	def initConnection(self):
 		self.api = PyiCloudService(self.username, self.password)
@@ -245,8 +252,8 @@ class iCloudAwayDetector(AwayDetector):
 			try:
 				self.currentDistance = self.getDistance()
 			except Exception as e:
-				print "Exception getting distance:", e
-				print "Resetting connection..."
+				self.logger.error("Exception getting distance: %s" % str(e))
+				self.logger.info("Resetting connection...")
 				self.initConnection()
 
 			time.sleep(120)
@@ -280,6 +287,8 @@ class ClimateController(object):
 		self.awayDetectors = {}
 		self.setpoint = setpoint
 		self.keepLooping = True
+
+		self.logger = logging.getLogger("ClimateController")
 
 	def shellCmd(self, cmd, args):
 		print "cmd: %s, args=%s" % (cmd, str(args))
@@ -365,7 +374,6 @@ class ClimateController(object):
 
 			except Exception as e:
 				print "Exception", e
-				print "Type \"exit\" to quit"
 
 	def addPolicy(self, policy, times=None):
 		self.policies[times] = policy
@@ -382,7 +390,7 @@ class ClimateController(object):
 		return True
 
 	def loop(self):
-		print "Started main loop..."
+		self.logger.info("Started main loop...")
 		time.sleep(240)
 		while self.keepLooping:
 			nowTime = datetime.now().time()
@@ -399,7 +407,7 @@ class ClimateController(object):
 						policy = self.policies[start, end]
 						break
 
-			print "Using policy: %s" % str(policy)
+			self.logger.info("using policy: %s" % str(policy))
 			policy.execute()
 			time.sleep(240)
 

@@ -39,7 +39,7 @@ class ujouleZWaveNode(object):
 			self.zwaveValuesById[value_id] = value
 			self.zwaveValuesByIndex[value.index] = value
 			self.zwaveValuesByLabel[value.label] = value
-			#self.logger.info("value: %s" % value)
+			self.logger.debug("value: %s" % value)
 		
 		self.activated()
 		
@@ -66,8 +66,6 @@ class ujouleZWaveNode(object):
 		self.logValue(zwaveValue)
 
 	def getValueId(self, label=None, index=None):
-	###def getOrValidateValueId(self, label=None, value_id=None):
-
 		if label == None and index == None:
 			self.valueException("Need to specify either label or index", label=label, index=index)
 		
@@ -144,21 +142,13 @@ class ZWaveMultisensor(ujouleZWaveNode):
 		self.logger.info("Activated multisensor-%d" % self.nodeId)
 		
 		self.registerTransform(self.correctTemperature, value_id=self.getValueId(label="Temperature"))
-		#self.setData(224, label="Group 1 Reports")
-		#self.setData(240, label="Group 1 Interval")
-		#self.setData(240, label="Wake-up Interval")
-		#try:
 		self.setData(240, value_id=self.getValueId(index=3))	# timeout period after motion sensor trigger
-		self.setData("True", value_id=self.getValueId(index=4))		# enable PIR motion sensor
+		self.setData("True", value_id=self.getValueId(index=4))	# enable PIR motion sensor
 		self.setData(224, value_id=self.getValueId(index=101))	# Set sensors to be reported
 		self.setData(240, value_id=self.getValueId(index=111))	# Set reporting interval
-		#except Exception as e:
-		#	print e
-		#self.setData("Yes", label="Wake up 10 minutes when batteries are inserted")		
 
 	def correctTemperature(self, temperature):
 		corrected = temperature + self.tempCorrection
-		#corrected = round(corrected, 5)
 		corrected = (int(corrected*10.0) -(int(corrected*10.0) % 5)) / 10.0
 		return corrected
 
