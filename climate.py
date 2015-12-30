@@ -7,8 +7,8 @@ from datetime import timedelta
 from datetime import time as dt_time
 from threading import Thread
 from pyicloud import PyiCloudService
-
-import urllib3
+import urllib2
+import json
 
 class TemperatureSource(object):
 	
@@ -84,6 +84,40 @@ class TemperatureSensor(TemperatureSource):
 	def getTemperature(self):
 		valueId = self.ujouleZWaveNode.getValueId(label="Temperature")
 		return self.ujouleZWaveNode.getData(valueId)
+
+# based on http://www.pythonforbeginners.com/scraping/scraping-wunderground
+class WeatherUndergroundTemperature(TemperatureSource):
+	apiKey = "912fc499d4de6771"
+	state = "NJ"
+	city = "North_Brunswick"
+	url = "http://api.wunderground.com/api/%s/conditions/q/%s/%s.json"
+
+	def __init__(self):
+		self.temperature = float("nan")
+		t = Thread(target=self.checkThread)
+		t.daemon = True
+		t.start()
+
+	def getTemperature(self):
+		return self.temperature
+
+	def checkThread(self):
+		while True:
+			try:
+				url = self.url % (self.apiKey, self.state, self.city)
+				f = urllib2.urlopen(url)
+				json_string = f.read()
+				f.close()
+
+				parsed_json = json.loads(json_string)
+				temp_f = parsed_json["current_observation"]["temp_f"]
+				self.temperature = temp_f
+
+			except Exception as e:
+				print "Exception getting temperature from weather underground:", e
+				self.temperature = float("nan")
+
+			time.sleep(120)
 
 class Policy(object):
 	def __init__(self, controller):
@@ -236,9 +270,10 @@ class iCloudAwayDetector(AwayDetector):
 
 class ClimateController(object):
 	# sensors is a dictionary by location
-	def __init__(self, thermostat, sensors, defaultPolicy=None, setpoint=74.0):
+	def __init__(self, thermostat, sensors, outsideSensor, defaultPolicy=None, setpoint=74.0):
 		self.thermostat = thermostat
 		self.sensors = sensors
+		self.outsideSensor = outsideSensor
 		self.policies = {}
 		if defaultPolicy == None:
 			self.defaultPolicy = SimplePolicy(self)
@@ -258,6 +293,8 @@ class ClimateController(object):
 
 			print "Sensor Mean:\t\t%0.2f F" % numpy.mean(readings)
 			print "Sensor StdDev:\t\t%0.2f F" % numpy.std(readings)
+
+			print "Outside Sensor:\t\t%0.2f F" % self.outsideSensor.getTemperature()
 
 			for name in self.awayDetectors:
 				detector = self.awayDetectors[name]
