@@ -12,82 +12,10 @@ from datetime import timedelta
 from datetime import time as dt_time
 from threading import Thread
 from pyicloud import PyiCloudService
-
-class TemperatureSource(object):
-	def getTemperature(self):
-		return float("nan")
-
-class Thermostat(TemperatureSource):
-	def __init__(self, ujouleZWaveNode):
-		self.ujouleZWaveNode = ujouleZWaveNode
-
-	def getTemperature(self):
-		valueId = self.ujouleZWaveNode.getValueId(label="Temperature")
-		return self.ujouleZWaveNode.getData(valueId)
-
-	def setFanOn(self, setting):
-		valueId = self.ujouleZWaveNode.getValueId(label="Fan Mode")
-		if setting:
-			self.ujouleZWaveNode.setData("On Low", valueId)
-		else:
-			self.ujouleZWaveNode.setData("Auto Low", valueId)
-
-	def getFanOn(self):
-		valueId = self.ujouleZWaveNode.getValueId(label="Fan Mode")
-		data = self.ujouleZWaveNode.getData(valueId)
-
-		if data == "Auto Low":
-			return False
-		elif data == "On Low":
-			return True
-		else:
-			raise Exception("Weirdness...")
-
-	def getFanState(self):
-		valueId = self.ujouleZWaveNode.getValueId(label="Fan State")
-		data = self.ujouleZWaveNode.getData(valueId)
-		if data == "Running":
-			return True
-		elif data == "Idle":
-			return False
-		else:
-			raise Exception("Weirdness...")
-
-	def setHeatOn(self, setting):
-		valueId = self.ujouleZWaveNode.getValueId(label="Mode")
-		if setting:
-			self.ujouleZWaveNode.setData("Heat", valueId)
-		else:
-			self.ujouleZWaveNode.setData("Off", valueId)
-
-	def getHeatOn(self):
-		valueId = self.ujouleZWaveNode.getValueId(label="Mode")
-		data = self.ujouleZWaveNode.getData(valueId)
-		if data == "Heat":
-			return True
-		elif data == "Off":
-			return False
-		else:
-			raise Exception("Weirdness...")
-
-	def setTarget(self, temp):
-		valueId = self.ujouleZWaveNode.getValueId(label="Heating 1")
-		self.ujouleZWaveNode.setData(temp, valueId)
-
-	def getTarget(self):
-		valueId = self.ujouleZWaveNode.getValueId(label="Heating 1")
-		return self.ujouleZWaveNode.getData(valueId)
-
-class TemperatureSensor(TemperatureSource):
-	def __init__(self, ujouleZWaveNode):
-		self.ujouleZWaveNode = ujouleZWaveNode
-
-	def getTemperature(self):
-		valueId = self.ujouleZWaveNode.getValueId(label="Temperature")
-		return self.ujouleZWaveNode.getData(valueId)
+from structures import ZWaveThermostat
 
 # based on http://www.pythonforbeginners.com/scraping/scraping-wunderground
-class WeatherUndergroundTemperature(TemperatureSource):
+class WeatherUndergroundTemperature(object):
 	apiKey = "912fc499d4de6771"
 	state = "NJ"
 	city = "North_Brunswick"
@@ -155,15 +83,14 @@ class SimplePolicy(Policy):
 
 		if referenceTemp <= threshold and not self.wasHeating:
 			self.logger.info("policy: need heat")
-			self.controller.thermostat.setHeatOn(True)
-			self.controller.thermostat.setFanOn(True)
-			self.controller.thermostat.setTarget(80.0)
+			self.controller.thermostat.setSystemMode(ZWaveThermostat.SYS_MODE_HEAT)
+			self.controller.thermostat.setFanMode(ZWaveThermostat.FAN_MODE_ON)
 			self.wasHeating = True
 			self.wasFanOn = True
 
 		elif referenceTemp > threshold and self.wasHeating:
 			self.logger.info("policy: hit target, heat off")
-			self.controller.thermostat.setHeatOn(False)
+			self.controller.thermostat.setSystemMode(ZWaveThermostat.SYS_MODE_OFF)
 			self.wasHeating = False
 			self.extraFanCycles = 3
 
@@ -172,7 +99,7 @@ class SimplePolicy(Policy):
 			self.logger.info("policy: extra fan minus one (extraFanCycles=%d)" % self.extraFanCycles)
 			if self.extraFanCycles == 0:
 				self.logger.info("policy: extra fan off")
-				self.controller.thermostat.setFanOn(False)
+				self.controller.thermostat.setFanMode(ZWaveThermostat.FAN_MODE_AUTO)
 				self.wasFanOn = False
 		else:
 			self.logger.info("policy: noop")
@@ -297,7 +224,10 @@ class ClimateController(object):
 			readings = []
 			for sensor in self.sensors:
 				temp = self.sensors[sensor].getTemperature()
-				readings.append(temp)
+				if temp == None:
+					temp = float("nan")
+				else:
+					readings.append(temp)
 				print "Sensor (%s):\t%0.2f F" % (sensor, temp)
 
 			print "Sensor Mean:\t\t%0.2f F" % numpy.mean(readings)
@@ -309,17 +239,19 @@ class ClimateController(object):
 				detector = self.awayDetectors[name]
 				print "Away Detector (%s):\t%s (%0.2f mi)" % (name, "Away" if detector.isAway() else "Home", detector.distance())
 
-			print "Setpoint:\t\t%0.2f F" % self.setpoint
-			#print "Target:\t\t\t%0.2f F" % self.thermostat.getTarget()
-			print "Fan Mode:\t\t%s" % ("Always" if self.thermostat.getFanOn() else "Auto")
-			print "Fan State:\t\t%s" % ("Running" if self.thermostat.getFanState() else "Off")
-			print "System State:\t\t%s" % ("On (Heat)" if self.thermostat.getHeatOn() else "Off")
+			try:
+				print "Setpoint:\t\t%0.2f F" % self.setpoint
+				print "Fan Mode:\t\t%s" % self.thermostat.constToString(self.thermostat.getFanMode())
+				print "Fan State:\t\t%s" % self.thermostat.constToString(self.thermostat.getFanState())
+				print "System State:\t\t%s" % self.thermostat.constToString(self.thermostat.getSystemMode())
+			except Exception as e:
+				print "Exception printing", e
 
 		elif cmd == "fan":
 			if len(args) >= 1 and args[0] == "on":
-				self.thermostat.setFanOn(True)
+				self.thermostat.setFanMode(ZWaveThermostat.FAN_MODE_ON)
 			elif len(args) >= 1 and args[0] == "auto":
-				self.thermostat.setFanOn(False)
+				self.thermostat.setFanMode(ZWaveThermostat.FAN_MODE_AUTO)
 			else:
 				print "invalid command for \"fan\""
 
@@ -330,13 +262,13 @@ class ClimateController(object):
 			else:
 				print "invalid command for \"setpoint\""
 
-		elif cmd == "heat":
-			if len(args) >= 1 and args[0] == "on":
-				self.thermostat.setHeatOn(True)
+		elif cmd == "mode":
+			if len(args) >= 1 and args[0] == "heat":
+				self.thermostat.setSystemMode(ZWaveThermostat.SYS_MODE_HEAT)
 			elif len(args) >= 1 and args[0] == "off":
-				self.thermostat.setHeatOn(False)
+				self.thermostat.setSystemMode(ZWaveThermostat.SYS_MODE_OFF)
 			else:
-				print "invalid command for \"heat\""
+				print "invalid command for \"mode\""
 
 		elif cmd == "exit":
 			self.stop()

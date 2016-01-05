@@ -21,7 +21,8 @@ from openzwave.group import ZWaveGroup
 from louie import dispatcher, All
 
 from structures import ZWaveMultisensor, ZWaveThermostat, ujouleZWaveNode
-from climate import ClimateController, Thermostat, TemperatureSensor, SimplePolicy, BedtimePolicy, iCloudAwayDetector, WeatherUndergroundTemperature
+from climate import ClimateController, SimplePolicy, BedtimePolicy, iCloudAwayDetector, WeatherUndergroundTemperature
+
 CONTROLLER_ID = 1
 THERMOSTAT_ID = 2
 BEDROOM_SENSOR_ID = 3
@@ -154,7 +155,7 @@ class uJouleController(object):
 			for registeredNode in self.registeredNodes:
 				if node.node_id == registeredNode.nodeId:
 					# pass the entire ZWaveValue object
-					registeredNode.valueUpdate(value)
+					registeredNode.notifyValueUpdated(value)
 		except Exception as e:
 			print "Exception", e
 			traceback.print_exc()
@@ -169,8 +170,8 @@ if __name__ == "__main__":
 
 	controller = uJouleController()
 
-	zwaveMultisensorBedroom = ZWaveMultisensor(BEDROOM_SENSOR_ID, tempCorrection=0.0)
-	zwaveMultisensorOffice = ZWaveMultisensor(OFFICE_SENSOR_ID, tempCorrection=0.0)
+	zwaveMultisensorBedroom = ZWaveMultisensor(BEDROOM_SENSOR_ID)
+	zwaveMultisensorOffice = ZWaveMultisensor(OFFICE_SENSOR_ID)
 	zwaveThermostat = ZWaveThermostat(THERMOSTAT_ID)
 	controller.registerNode(zwaveThermostat)
 	controller.registerNode(zwaveMultisensorBedroom)
@@ -178,17 +179,17 @@ if __name__ == "__main__":
 	controller.start()
 	controller.ready()
 
-	thermostat = Thermostat(zwaveThermostat)
-	sensors = {
-		"bedroom" : TemperatureSensor(zwaveMultisensorBedroom),
-		"office" : TemperatureSensor(zwaveMultisensorOffice),
-		"livingroom" : thermostat,
+	insideSensors = {
+		"bedroom" : zwaveMultisensorBedroom,
+		"office" : zwaveMultisensorOffice,
+		"livingroom" : zwaveThermostat,
 	}
 	outsideSensor = WeatherUndergroundTemperature()
-	climateController = ClimateController(thermostat, sensors, outsideSensor)
+
+	climateController = ClimateController(zwaveThermostat, insideSensors, outsideSensor)
 
 	bedtimePolicy = BedtimePolicy(climateController)
-	climateController.addPolicy(bedtimePolicy, (time(hour=19, minute=45), time(hour=7)))
+	#climateController.addPolicy(bedtimePolicy, (time(hour=19, minute=45), time(hour=7)))
 
 	billDetector = iCloudAwayDetector("wkatsak@cs.rutgers.edu", "Bill1085")
 	firuzaDetector = iCloudAwayDetector("firuzaa8@gmail.com", "Bill1085")
