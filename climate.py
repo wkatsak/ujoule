@@ -52,10 +52,43 @@ class WeatherUndergroundTemperature(object):
 class Policy(object):
 	def __init__(self, controller):
 		self.controller = controller
+		self.logger = logging.getLogger("Policy")
+
+	def execute(self):
+		pass
+
+class SubsumptionArchPolicy(Policy):
+
+	class NextState(object):
+		def __init__(self):
+			self.systemMode = ZWaveThermostat.SYS_MODE_OFF
+			self.fanMode = ZWaveThermostat.FAN_MODE_AUTO
+
+	def __init__(self, controller):
+		super(SubsumptionArchPolicy, self).__init__(controller)
+		self.policies = []
+
+	def execute(self):
+		# most basic state, system off
+		nextState = SubsumptionArchPolicy.NextState()
+
+		# go through the policies, least priority first
+		for policy in reversed(self.policies):
+			self.policies[policy](nextState)
+
+		# use whatever is left in the nextState to configure the system
+		self.controller.setSystemMode(nextState.systemMode)
+		self.controller.setFanMode(nextState.fanMode)
+
+class SimplePolicy(Policy):
+	awayThreshold = 60.0
+
+	def __init__(self, controller):
+		super(SimplePolicy, self).__init__(controller)
+
 		self.wasHeating = False
 		self.wasFanOn = False
 		self.extraFanCycles = 0
-		self.logger = logging.getLogger("Policy")
 
 	def getReferenceTemp(self):
 		temps = []
@@ -64,12 +97,6 @@ class Policy(object):
 
 		mean = numpy.mean(temps)
 		return mean
-
-	def execute(self):
-		pass
-
-class SimplePolicy(Policy):
-	awayThreshold = 60.0
 
 	def execute(self):
 		referenceTemp = self.getReferenceTemp()
