@@ -61,8 +61,8 @@ class SubsumptionArchPolicy(Policy):
 
 	class NextState(object):
 		def __init__(self):
-			self.systemMode = ZWaveThermostat.SYS_MODE_OFF
-			self.fanMode = ZWaveThermostat.FAN_MODE_AUTO
+			self.systemMode = ujouleZWaveThermostat.SYS_MODE_OFF
+			self.fanMode = ujouleZWaveThermostat.FAN_MODE_AUTO
 
 	def __init__(self, controller):
 		super(SubsumptionArchPolicy, self).__init__(controller)
@@ -110,14 +110,14 @@ class SimplePolicy(Policy):
 
 		if referenceTemp <= threshold and not self.wasHeating:
 			self.logger.info("policy: need heat")
-			self.controller.thermostat.setSystemMode(ZWaveThermostat.SYS_MODE_HEAT)
-			self.controller.thermostat.setFanMode(ZWaveThermostat.FAN_MODE_ON)
+			self.controller.thermostat.setSystemMode(ujouleZWaveThermostat.SYS_MODE_HEAT)
+			self.controller.thermostat.setFanMode(ujouleZWaveThermostat.FAN_MODE_ON)
 			self.wasHeating = True
 			self.wasFanOn = True
 
 		elif referenceTemp > threshold and self.wasHeating:
 			self.logger.info("policy: hit target, heat off")
-			self.controller.thermostat.setSystemMode(ZWaveThermostat.SYS_MODE_OFF)
+			self.controller.thermostat.setSystemMode(ujouleZWaveThermostat.SYS_MODE_OFF)
 			self.wasHeating = False
 			self.extraFanCycles = 3
 
@@ -126,7 +126,7 @@ class SimplePolicy(Policy):
 			self.logger.info("policy: extra fan minus one (extraFanCycles=%d)" % self.extraFanCycles)
 			if self.extraFanCycles == 0:
 				self.logger.info("policy: extra fan off")
-				self.controller.thermostat.setFanMode(ZWaveThermostat.FAN_MODE_AUTO)
+				self.controller.thermostat.setFanMode(ujouleZWaveThermostat.FAN_MODE_AUTO)
 				self.wasFanOn = False
 		else:
 			self.logger.info("policy: noop")
@@ -229,6 +229,10 @@ class iCloudAwayDetector(AwayDetector):
 		else:
 			return False
 
+class ClimateControllerDataSource(object):
+	pass
+
+	
 class ClimateController(object):
 	# sensors is a dictionary by location
 	def __init__(self, thermostat, sensors, outsideSensor, defaultPolicy=None, setpoint=74.0):
@@ -276,9 +280,9 @@ class ClimateController(object):
 
 		elif cmd == "fan":
 			if len(args) >= 1 and args[0] == "on":
-				self.thermostat.setFanMode(ZWaveThermostat.FAN_MODE_ON)
+				self.thermostat.setFanMode(ujouleZWaveThermostat.FAN_MODE_ON)
 			elif len(args) >= 1 and args[0] == "auto":
-				self.thermostat.setFanMode(ZWaveThermostat.FAN_MODE_AUTO)
+				self.thermostat.setFanMode(ujouleZWaveThermostat.FAN_MODE_AUTO)
 			else:
 				print "invalid command for \"fan\""
 
@@ -291,9 +295,9 @@ class ClimateController(object):
 
 		elif cmd == "mode":
 			if len(args) >= 1 and args[0] == "heat":
-				self.thermostat.setSystemMode(ZWaveThermostat.SYS_MODE_HEAT)
+				self.thermostat.setSystemMode(ujouleZWaveThermostat.SYS_MODE_HEAT)
 			elif len(args) >= 1 and args[0] == "off":
-				self.thermostat.setSystemMode(ZWaveThermostat.SYS_MODE_OFF)
+				self.thermostat.setSystemMode(ujouleZWaveThermostat.SYS_MODE_OFF)
 			else:
 				print "invalid command for \"mode\""
 
