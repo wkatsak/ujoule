@@ -45,4 +45,6 @@ class ClimateDataCollector(object):
 			logFile = "%s/setpoint.dat" % (self.dataPath)
 			self.writeFile(logFile, unixTimeNow, value)
 
-
+		elif signal == ujouleLouieSignals.SIGNAL_AWAY_STATE_UPDATED:
+			logFile = "%s/away.dat" % (self.dataPath)
+			self.writeFile(logFile, unixTimeNow, 1 if value else 0)

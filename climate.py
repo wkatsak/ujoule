@@ -355,6 +355,8 @@ class ClimateController(object):
 
 		dispatcher.connect(self.executePolicy, ujouleLouieSignals.SIGNAL_TEMPERATURE_CHANGED)
 		dispatcher.connect(self.executePolicy, ujouleLouieSignals.SIGNAL_SETPOINT_CHANGED)
+		dispatcher.connect(self.executePolicy, ujouleLouieSignals.SIGNAL_AWAY_STATE_CHANGED)
+
 		self.dataCollector.start()
 		self.broadcastParams()
 		self.executePolicy()

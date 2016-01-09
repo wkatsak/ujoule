@@ -70,6 +70,8 @@ class iCloudAwayDetector(AwayDetector):
 		self.initConnection()
 
 		self.currentDistance = 0.0
+		self.prevState = None
+
 		t = Thread(target=self.checkThread)
 		t.daemon = True
 		t.start()
@@ -123,6 +125,13 @@ class iCloudAwayDetector(AwayDetector):
 				self.logger.error("Exception getting distance: %s" % str(e))
 				self.logger.info("Resetting connection...")
 				self.initConnection()
+
+			away = self.isAway()
+			if away != self.prevState:
+				dispatcher.send(signal=ujouleLouieSignals.SIGNAL_AWAY_STATE_CHANGED, sender=self, value=away)
+
+			self.prevState = away
+			dispatcher.send(signal=ujouleLouieSignals.SIGNAL_AWAY_STATE_UPDATED, sender=self, value=away)
 
 			time.sleep(self.updateInterval)
 
