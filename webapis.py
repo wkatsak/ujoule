@@ -59,7 +59,7 @@ class iCloudAwayDetector(AwayDetector):
 	homeLat = 40.435311
 	homeLong = -74.496817
 
-	def __init__(self, username, password, threshold=3.0, updateInterval=120):
+	def __init__(self, username, password, threshold=5.0, updateInterval=120):
 		#urllib3.disable_warnings()
 
 		self.username = username
