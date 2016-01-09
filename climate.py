@@ -10,75 +10,13 @@ import json
 from datetime import datetime
 from datetime import timedelta
 from datetime import time as dt_time
-from threading import Thread
-from pyicloud import PyiCloudService
-from structures import ZWaveThermostat
-
-# based on http://www.pythonforbeginners.com/scraping/scraping-wunderground
-class WeatherUndergroundTemperature(object):
-	apiKey = "912fc499d4de6771"
-	state = "NJ"
-	city = "North_Brunswick"
-	url = "http://api.wunderground.com/api/%s/conditions/q/%s/%s.json"
-
-	def __init__(self):
-		self.temperature = float("nan")
-		t = Thread(target=self.checkThread)
-		t.daemon = True
-		t.start()
-		self.logger = logging.getLogger("WeatherUndergroundTemperature")
-
-	def getTemperature(self):
-		return self.temperature
-
-	def checkThread(self):
-		while True:
-			try:
-				url = self.url % (self.apiKey, self.state, self.city)
-				f = urllib2.urlopen(url)
-				json_string = f.read()
-				f.close()
-
-				parsed_json = json.loads(json_string)
-				temp_f = parsed_json["current_observation"]["temp_f"]
-				self.temperature = temp_f
-
-			except Exception as e:
-				self.logger.error("Exception getting temperature from weather underground: %s" % str(e))
-				self.temperature = float("nan")
-
-			time.sleep(120)
-
-class Policy(object):
-	def __init__(self, controller):
-		self.controller = controller
-		self.logger = logging.getLogger("Policy")
-
-	def execute(self):
-		pass
-
-class SubsumptionArchPolicy(Policy):
-
-	class NextState(object):
-		def __init__(self):
-			self.systemMode = ujouleZWaveThermostat.SYS_MODE_OFF
-			self.fanMode = ujouleZWaveThermostat.FAN_MODE_AUTO
-
-	def __init__(self, controller):
-		super(SubsumptionArchPolicy, self).__init__(controller)
-		self.policies = []
-
-	def execute(self):
-		# most basic state, system off
-		nextState = SubsumptionArchPolicy.NextState()
-
-		# go through the policies, least priority first
-		for policy in reversed(self.policies):
-			self.policies[policy](nextState)
-
-		# use whatever is left in the nextState to configure the system
-		self.controller.setSystemMode(nextState.systemMode)
-		self.controller.setFanMode(nextState.fanMode)
+from threading import Thread, Timer, Lock
+from louie import dispatcher
+from common import ujouleLouieSignals, Policy
+from zwave import ujouleZWaveThermostat
+from webapis import WeatherUndergroundTemperature, iCloudAwayDetector
+from datacollector import ClimateDataCollector
+from shell import ClimateControllerShell
 
 class SimplePolicy(Policy):
 	awayThreshold = 60.0
@@ -93,7 +31,9 @@ class SimplePolicy(Policy):
 	def getReferenceTemp(self):
 		temps = []
 		for sensor in self.controller.sensors:
-			temps.append(self.controller.sensors[sensor].getTemperature())
+			temp = self.controller.sensors[sensor].getTemperature()
+			if not math.isnan(temp):
+				temps.append(temp)
 
 		mean = numpy.mean(temps)
 		return mean
@@ -131,218 +71,218 @@ class SimplePolicy(Policy):
 		else:
 			self.logger.info("policy: noop")
 
-class BedtimePolicy(SimplePolicy):
+class SimpleBedtimePolicy(SimplePolicy):
 	def execute(self):
 		super(BedtimePolicy, self).execute()
 
 	def getReferenceTemp(self):
 		return self.controller.sensors["bedroom"].getTemperature()
 
-class AwayDetector(object):
-	def isAway(self):
-		pass
+class SubsumptionArchPolicy(Policy):
 
-class iCloudAwayDetector(AwayDetector):
-	homeLat = 40.435311
-	homeLong = -74.496817
+	class State(object):
+		def __init__(self, orig=None):
+			if orig == None:
+				self.systemMode = ujouleZWaveThermostat.SYS_MODE_OFF
+				self.systemSetTime = None
+				self.fanMode = ujouleZWaveThermostat.FAN_MODE_AUTO
+				self.fanSetTime = None
+				self.vars = {}
+			else:
+				self.systemMode = orig.systemMode
+				self.systemSetTime = orig.systemSetTime
+				self.fanMode = orig.fanMode
+				self.fanSetTime = orig.fanSetTime
+				self.vars = dict(orig.vars)
 
-	def __init__(self, username, password, threshold=3.0):
-		#urllib3.disable_warnings()
+	def __init__(self, controller):
+		super(SubsumptionArchPolicy, self).__init__(controller)
+		self.policies = []
+		self.currentState = SubsumptionArchPolicy.State()
 
-		self.username = username
-		self.password = password
-		self.threshold = threshold
-		
-		self.initConnection()
+	def execute(self):
+		# most basic state, system off
+		nextState = SubsumptionArchPolicy.State(self.currentState)
 
-		self.currentDistance = self.getDistance()
-		t = Thread(target=self.checkThread)
-		t.daemon = True
-		t.start()
+		# go through the policies, least priority first
+		for policy in self.policies:
+			policy(self.currentState, nextState)
 
-		self.logger = logging.getLogger("iCloudAwayDetector")
+		# use whatever is left in the nextState to configure the system
+		if nextState.systemMode != self.currentState.systemMode:
+			nextState.systemSetTime = datetime.now()
+			self.logger.info("Setting system mode to %s" % self.controller.thermostat.constToString(nextState.systemMode))
+			self.controller.thermostat.setSystemMode(nextState.systemMode)
 
-	def initConnection(self):
-		self.api = PyiCloudService(self.username, self.password)
-		self.iphone = None
+		if nextState.fanMode != self.currentState.fanMode:
+			nextState.fanSetTime = datetime.now()
+			self.logger.info("Setting fan mode to %s" % self.controller.thermostat.constToString(nextState.fanMode))
+			self.controller.thermostat.setFanMode(nextState.fanMode)
 
-		for device in self.api.devices:
-			if device.data["deviceClass"] == "iPhone":
-				self.iphone = device
-				break
+		self.currentState = nextState
 
-	# From: http://www.johndcook.com/blog/python_longitude_latitude/
-	def distance_on_unit_sphere(self, lat1, long1, lat2, long2):
-	    # Convert latitude and longitude to
-	    # spherical coordinates in radians.
-	    degrees_to_radians = math.pi/180.0
+class BasicSubsumptionArchPolicy(SubsumptionArchPolicy):
 
-	    # phi = 90 - latitude
-	    phi1 = (90.0 - lat1)*degrees_to_radians
-	    phi2 = (90.0 - lat2)*degrees_to_radians
+	def __init__(self, controller):
+		super(BasicSubsumptionArchPolicy, self).__init__(controller)
+		self.policies =	[
+				self.tempLow,
+				self.tempHigh,
+				self.somewhereHighByTwo,
+				self.somewhereLowByThree,
+				self.heatOffInterval,
+				self.heatOnInterval,
+				self.fanAfterHeat,
+				self.fanCirculate,
+				self.fanOff,
+				self.away
+		]
 
-	    # theta = longitude
-	    theta1 = long1*degrees_to_radians
-	    theta2 = long2*degrees_to_radians
+	def tempLow(self, currentState, nextState):
+		if self.controller.tempMean() < self.controller.getSetpoint() - 0.5:
+			self.logger.info("tempLow tripped")
+			nextState.systemMode = ujouleZWaveThermostat.SYS_MODE_HEAT
+			nextState.fanMode = ujouleZWaveThermostat.FAN_MODE_AUTO
 
-	    # Compute spherical distance from spherical coordinates.
+	def tempHigh(self, currentState, nextState):
+		if self.controller.tempMean() >= self.controller.getSetpoint():
+			self.logger.info("tempHigh tripped")
+			nextState.systemMode = ujouleZWaveThermostat.SYS_MODE_OFF
 
-	    # For two locations in spherical coordinates
-	    # (1, theta, phi) and (1, theta', phi')
-	    # cosine( arc length ) =
-	    #    sin phi sin phi' cos(theta-theta') + cos phi cos phi'
-	    # distance = rho * arc length
+	def somewhereHighByTwo(self, currentState, nextState):
+		if self.controller.tempMax() >= self.controller.getSetpoint() + 2.0:
+			self.logger.info("somewhereHighByTwo tripped")
+			nextState.systemMode = ujouleZWaveThermostat.SYS_MODE_OFF
 
-	    cos = (math.sin(phi1)*math.sin(phi2)*math.cos(theta1 - theta2) +
-	           math.cos(phi1)*math.cos(phi2))
-	    arc = math.acos( cos )
+	def somewhereLowByThree(self, currentState, nextState):
+		if self.controller.tempMin() < self.controller.getSetpoint() - 3.0:
+			self.logger.info("somewhereLowByThree tripped")
+			nextState.systemMode = ujouleZWaveThermostat.SYS_MODE_HEAT
+			nextState.fanMode = ujouleZWaveThermostat.FAN_MODE_AUTO
 
-	    # Remember to multiply arc by the radius of the earth
-	    # in your favorite set of units to get length.
-	    return arc * 3959.0
+	def heatOffInterval(self, currentState, nextState):
+		if nextState.systemMode == ujouleZWaveThermostat.SYS_MODE_HEAT and currentState.systemMode == ujouleZWaveThermostat.SYS_MODE_OFF:
+			if currentState.systemSetTime and datetime.now() - currentState.systemSetTime < timedelta(minutes=4):
+				self.logger.info("heatOffInterval tripped")
+				nextState.systemMode = ujouleZWaveThermostat.SYS_MODE_OFF
 
-	def checkThread(self):
-		while True:
-			try:
-				self.currentDistance = self.getDistance()
-			except Exception as e:
-				self.logger.error("Exception getting distance: %s" % str(e))
-				self.logger.info("Resetting connection...")
-				self.initConnection()
+	def heatOnInterval(self, currentState, nextState):
+		if nextState.systemMode == ujouleZWaveThermostat.SYS_MODE_OFF and currentState.systemMode == ujouleZWaveThermostat.SYS_MODE_HEAT:
+			if currentState.systemSetTime and datetime.now() - currentState.systemSetTime < timedelta(minutes=4):
+				self.logger.info("heatOnInterval tripped")
+				nextState.systemMode = ujouleZWaveThermostat.SYS_MODE_HEAT
 
-			time.sleep(120)
+	def fanAfterHeat(self, currentState, nextState):
+		if nextState.systemMode == ujouleZWaveThermostat.SYS_MODE_OFF and currentState.systemMode == ujouleZWaveThermostat.SYS_MODE_HEAT:
+			self.logger.info("fanAfterHeat tripped")
+			nextState.fanMode = ujouleZWaveThermostat.FAN_MODE_ON
 
-	def getDistance(self):
-		if not self.iphone:
-			return -1.0
+	def fanCirculate(self, currentState, nextState):
+		if nextState.systemMode == ujouleZWaveThermostat.SYS_MODE_OFF and nextState.fanMode == ujouleZWaveThermostat.FAN_MODE_AUTO:
+			if self.controller.tempStdDev() > 2.0:
+				self.logger.info("fanCirculate tripped")
+				nextState.fanMode = ujouleZWaveThermostat.FAN_MODE_ON
 
-		location = self.iphone.location()
-		distance = self.distance_on_unit_sphere(self.homeLat, self.homeLong, location["latitude"], location["longitude"])
-		return distance
+	def fanOff(self, currentState, nextState):
+		if nextState.systemMode == ujouleZWaveThermostat.SYS_MODE_OFF and nextState.fanMode == ujouleZWaveThermostat.FAN_MODE_ON:
+			if self.controller.tempStdDev() <= 2.0 and currentState.fanSetTime and datetime.now() - currentState.fanSetTime >= timedelta(minutes=4):
+				self.logger.info("fanOff tripped")
+				nextState.fanMode = ujouleZWaveThermostat.FAN_MODE_AUTO
 
-	def distance(self):
-		return self.currentDistance
+	def away(self, currentState, nextState):
+		if self.controller.away() and self.controller.tempMin() > 60.0:
+			self.logger.info("away tripped")
+			nextState.systemMode = ujouleZWaveThermostat.SYS_MODE_OFF
+			nextState.fanMode = ujouleZWaveThermostat.FAN_MODE_AUTO
 
-	def isAway(self):
-		if self.currentDistance > self.threshold:
-			return True
-		else:
-			return False
-
-class ClimateControllerDataSource(object):
-	pass
-
-	
 class ClimateController(object):
 	# sensors is a dictionary by location
-	def __init__(self, thermostat, sensors, outsideSensor, defaultPolicy=None, setpoint=74.0):
+	def __init__(self, thermostat, sensors, outsideSensor, setpoint=74.0):
 		self.thermostat = thermostat
 		self.sensors = sensors
 		self.outsideSensor = outsideSensor
 		self.policies = {}
-		if defaultPolicy == None:
-			self.defaultPolicy = SimplePolicy(self)
+		self.defaultPolicy = None
+		self.policyInstances = {}
 		self.awayDetectors = {}
+		self.prevSetpoint = setpoint
 		self.setpoint = setpoint
-		self.keepLooping = True
+
+		self.policyLock = Lock()
+		self.broadcastLock = Lock()
+		self.policyTimer = None
+		self.broadcastTimer = None
+
+		self.dataCollector = ClimateDataCollector(self)
+		self.shellImpl = ClimateControllerShell(self)
 
 		self.logger = logging.getLogger("ClimateController")
 
-	def shellCmd(self, cmd, args):
-		print "cmd: %s, args=%s" % (cmd, str(args))
+	def getSensors(self):
+		return list(self.sensors.keys())
 
-		if cmd == "status":
-			readings = []
-			for sensor in self.sensors:
-				temp = self.sensors[sensor].getTemperature()
-				if temp == None:
-					temp = float("nan")
-				else:
-					readings.append(temp)
-				print "Sensor (%s):\t%0.2f F" % (sensor, temp)
+	def getSensorTemp(self, sensor):
+		return self.sensors[sensor].getTemperature()
 
-			print "Sensor Mean:\t\t%0.2f F" % numpy.mean(readings)
-			print "Sensor StdDev:\t\t%0.2f F" % numpy.std(readings)
+	def getAllTemps(self):
+		temps = []
+		for sensor in self.getSensors():
+			temp = self.getSensorTemp(sensor)
+			if not math.isnan(temp):
+				temps.append(temp)
 
-			print "Outside Sensor:\t\t%0.2f F" % self.outsideSensor.getTemperature()
+		return temps
 
-			for name in self.awayDetectors:
-				detector = self.awayDetectors[name]
-				print "Away Detector (%s):\t%s (%0.2f mi)" % (name, "Away" if detector.isAway() else "Home", detector.distance())
+	def tempMean(self):
+		temps = self.getAllTemps()
+		mean = numpy.mean(temps)
+		return mean
 
-			try:
-				print "Setpoint:\t\t%0.2f F" % self.setpoint
-				print "Fan Mode:\t\t%s" % self.thermostat.constToString(self.thermostat.getFanMode())
-				print "Fan State:\t\t%s" % self.thermostat.constToString(self.thermostat.getFanState())
-				print "System State:\t\t%s" % self.thermostat.constToString(self.thermostat.getSystemMode())
-			except Exception as e:
-				print "Exception printing", e
+	def tempStdDev(self):
+		temps = self.getAllTemps()
+		stdDev = numpy.std(temps)
+		return stdDev
 
-		elif cmd == "fan":
-			if len(args) >= 1 and args[0] == "on":
-				self.thermostat.setFanMode(ujouleZWaveThermostat.FAN_MODE_ON)
-			elif len(args) >= 1 and args[0] == "auto":
-				self.thermostat.setFanMode(ujouleZWaveThermostat.FAN_MODE_AUTO)
-			else:
-				print "invalid command for \"fan\""
+	def tempMaxDelta(self):
+		temps = self.getAllTemps()
+		maxDelta = numpy.max(temps) - numpy.min(temps)
+		return maxDelta
 
-		elif cmd == "setpoint":
-			if len(args) >= 1:
-				temp = float(args[0])
-				self.setpoint = temp
-			else:
-				print "invalid command for \"setpoint\""
+	def tempMin(self):
+		temps = self.getAllTemps()
+		minTemp = numpy.min(temps)
+		return minTemp
 
-		elif cmd == "mode":
-			if len(args) >= 1 and args[0] == "heat":
-				self.thermostat.setSystemMode(ujouleZWaveThermostat.SYS_MODE_HEAT)
-			elif len(args) >= 1 and args[0] == "off":
-				self.thermostat.setSystemMode(ujouleZWaveThermostat.SYS_MODE_OFF)
-			else:
-				print "invalid command for \"mode\""
+	def tempMax(self):
+		temps = self.getAllTemps()
+		maxTemp = numpy.max(temps)
+		return maxTemp
 
-		elif cmd == "exit":
-			self.stop()
-			print "Goodbye!"
-			return False
+	def instantiatePolicy(self, policy):
+		if policy not in self.policyInstances:
+			self.policyInstances[policy] = policy(self)
 
-		else:
-			print "No command given..."
-		
-		return True
-
-	def shell(self):
-		print "uJoule Climate Controller Shell"
-		keepGoing = True
-		prevCmd = None
-		prevArgs = None
-
-		while keepGoing:
-			try:
-				cmdLine = raw_input("> ")
-				if len(cmdLine) == 0 and prevCmd:
-					keepGoing = self.shellCmd(prevCmd, prevArgs)
-					continue
-
-				fields = cmdLine.split(" ")
-				cmd = fields[0]
-				args = []
-				if len(fields) >= 2:
-					for i in xrange(1, len(fields)):
-						args.append(fields[i])
-
-				keepGoing = self.shellCmd(cmd, args)
-				prevCmd = cmd
-				prevArgs = args
-
-			except Exception as e:
-				print "Exception", e
+	def setDefaultPolicy(self, policy):
+		self.defaultPolicy = policy
+		self.instantiatePolicy(policy)
 
 	def addPolicy(self, policy, times=None):
 		self.policies[times] = policy
+		self.instantiatePolicy(policy)
 
 	def addAwayDetector(self, name, detector):
 		self.awayDetectors[name] = detector
+
+	def setSetpoint(self, setpoint):
+		if setpoint != self.prevSetpoint:
+			dispatcher.send(signal=ujouleLouieSignals.SIGNAL_SETPOINT_CHANGED, sender=self.setSetpoint, value=setpoint)
+			self.prevSetpoint = self.setpoint
+
+		self.setpoint = setpoint
+		self.broadcastParams()
+
+	def getSetpoint(self):
+		return self.setpoint
 
 	def away(self):
 		for name in self.awayDetectors:
@@ -352,37 +292,81 @@ class ClimateController(object):
 
 		return True
 
-	def loop(self):
-		self.logger.info("Started main loop...")
-		time.sleep(240)
-		while self.keepLooping:
-			nowTime = datetime.now().time()
+	def broadcastParams(self):
+		if not self.broadcastLock.acquire(False):
+			return
 
-			policy = self.defaultPolicy
+		if self.broadcastTimer:
+			self.broadcastTimer.cancel()
 
-			for start, end in self.policies:
-				if end >= start:
-					if nowTime >= start and nowTime < end:
-						policy = self.policies[start, end]
-						break
-				else:
-					if nowTime >= start or nowTime < end:
-						policy = self.policies[start, end]
-						break
+		dispatcher.send(signal=ujouleLouieSignals.SIGNAL_SETPOINT_UPDATED, sender=self.broadcastParams, value=self.setpoint)
+		# set up a timer
+		self.broadcastTimer = Timer(60.0, self.broadcastParams)
+		self.broadcastTimer.start()
 
+		self.broadcastLock.release()
+
+	def executePolicy(self, sender=None):
+		# try to obtain the lock, if we cannot, someone else is already executing
+		# the policy, so no sense in doing it again
+		if not self.policyLock.acquire(False):
+			return
+
+		# if we are inside, try to cancel the timer, if possible
+		if self.policyTimer:
+			self.policyTimer.cancel()
+
+		self.logger.info("entered executePolicy, caused by %s" % str(sender))
+
+		# see what time it is
+		nowTime = datetime.now().time()
+
+		# find the currently valid policy
+		policy = self.defaultPolicy
+		for start, end in self.policies:
+			if end >= start:
+				if nowTime >= start and nowTime < end:
+					policy = self.policies[start, end]
+					break
+			else:
+				if nowTime >= start or nowTime < end:
+					policy = self.policies[start, end]
+					break
+
+		if policy:
 			self.logger.info("using policy: %s" % str(policy))
-			policy.execute()
-			time.sleep(240)
+			# execute policy
+			self.policyInstances[policy].execute()
+		else:
+			self.logger.info("no policy configured")
+
+		# set up a timer to guarantee we rerun in 240s
+		self.policyTimer = Timer(240.0, self.executePolicy, [Timer])
+		self.policyTimer.start()
+
+		self.logger.info("finished executePolicy")
+
+		# drop the lock
+		self.policyLock.release()
 
 	def start(self):
-		t = Thread(target=self.loop)
-		t.daemon = True
-		t.start()
+		self.thermostat.setSystemMode(ujouleZWaveThermostat.SYS_MODE_OFF)
+		self.thermostat.setFanMode(ujouleZWaveThermostat.FAN_MODE_AUTO)
+
+		dispatcher.connect(self.executePolicy, ujouleLouieSignals.SIGNAL_TEMPERATURE_CHANGED)
+		dispatcher.connect(self.executePolicy, ujouleLouieSignals.SIGNAL_SETPOINT_CHANGED)
+		self.dataCollector.start()
+		self.broadcastParams()
+		self.executePolicy()
 
 	def stop(self):
-		self.keepLooping = False
+		if self.policyTimer:
+			self.policyTimer.cancel()
+		if self.broadcastTimer:
+			self.broadcastTimer.cancel()
 
-if __name__ == "__main__":
-	sensors = {"livingroom" : TemperatureSensor(None), "office" : TemperatureSensor(None), "bedroom" : TemperatureSensor(None)}
-	controller = ClimateController(None, sensors)
-	controller.shell()
+		self.thermostat.setSystemMode(ujouleZWaveThermostat.SYS_MODE_OFF)
+		self.thermostat.setFanMode(ujouleZWaveThermostat.FAN_MODE_AUTO)
+
+	def shell(self):
+		self.shellImpl.shell()

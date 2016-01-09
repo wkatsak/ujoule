@@ -6,22 +6,10 @@ import sys, os, signal
 import time
 import argparse
 import traceback
-
 from datetime import datetime, timedelta, time
-from threading import Lock, Condition
-
-import openzwave
-from openzwave.node import ZWaveNode
-from openzwave.value import ZWaveValue
-from openzwave.scene import ZWaveScene
-from openzwave.controller import ZWaveController
-from openzwave.network import ZWaveNetwork
-from openzwave.option import ZWaveOption
-from openzwave.group import ZWaveGroup
-from louie import dispatcher, All
 
 from zwave import ujouleZWaveController, ujouleZWaveNode, ujouleZWaveMultisensor, ujouleZWaveThermostat
-from climate import ClimateController, SimplePolicy, BedtimePolicy, iCloudAwayDetector, WeatherUndergroundTemperature
+from climate import ClimateController, SimplePolicy, SimpleBedtimePolicy, iCloudAwayDetector, WeatherUndergroundTemperature, BasicSubsumptionArchPolicy
 
 CONTROLLER_ID = 1
 THERMOSTAT_ID = 2
@@ -36,7 +24,7 @@ logging.basicConfig(filename="ujoule.log", level=logging.INFO, format='%(asctime
 
 def sigint(signum, other):
 	print "SIGINT"
-	controller.stop()
+	zwaveController.stop()
 	sys.exit()
 
 if __name__ == "__main__":
@@ -53,6 +41,11 @@ if __name__ == "__main__":
 	zwaveController.start()
 	zwaveController.ready()
 
+	# make sure we have good values from the zwave stuff before we start the climate logic
+	zwaveThermostat.ready()
+	zwaveMultisensorBedroom.ready()
+	zwaveMultisensorOffice.ready()
+
 	# initialize climate control stuff
 	insideSensors = {
 		"bedroom" : zwaveMultisensorBedroom,
@@ -63,8 +56,8 @@ if __name__ == "__main__":
 
 	climateController = ClimateController(zwaveThermostat, insideSensors, outsideSensor)
 
-	bedtimePolicy = BedtimePolicy(climateController)
-	#climateController.addPolicy(bedtimePolicy, (time(hour=19, minute=45), time(hour=7)))
+	climateController.setDefaultPolicy(BasicSubsumptionArchPolicy)
+	#climateController.addPolicy(SimpleBedtimePolicy, (time(hour=19, minute=45), time(hour=7)))
 
 	billDetector = iCloudAwayDetector("wkatsak@cs.rutgers.edu", "Bill1085")
 	firuzaDetector = iCloudAwayDetector("firuzaa8@gmail.com", "Bill1085")
@@ -74,5 +67,6 @@ if __name__ == "__main__":
 	climateController.start()
 	climateController.shell()
 
-	controller.stop()
+	climateController.stop()
+	zwaveController.stop()
 	sys.exit()

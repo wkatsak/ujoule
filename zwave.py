@@ -2,21 +2,28 @@
 
 import logging
 import openzwave
-
-from helpers import unix_ts
-from threading import Lock
-from datetime import datetime, timedelta
 from openzwave.node import ZWaveNode
 from openzwave.value import ZWaveValue
+from openzwave.scene import ZWaveScene
+from openzwave.controller import ZWaveController
+from openzwave.network import ZWaveNetwork
+from openzwave.option import ZWaveOption
+from openzwave.group import ZWaveGroup
+from louie import dispatcher, All
 
-class uJouleZWaveException(Exception):
+from helpers import unix_ts
+from threading import Lock, Condition
+from datetime import datetime, timedelta
+from common import ujouleLouieSignals
+
+class ujouleZWaveException(Exception):
 	def __init__(self, msg):
-		super(uJouleZWaveException, self).__init__(self)
+		super(ujouleZWaveException, self).__init__(self)
 
 # the controller should take care of the zwave network and objects
-class uJouleZWaveController(object):
+class ujouleZWaveController(object):
 	def __init__(self, nodeId, device="/dev/zwave", options=None):
-		self.logger = logging.getLogger("uJouleZWaveController")
+		self.logger = logging.getLogger("ujouleZWaveController")
 		self.nodeId = nodeId
 
 		# openzwave configuration
@@ -149,6 +156,10 @@ class ujouleZWaveNode(object):
 		self.zwaveValuesById = {}
 		self.zwaveValuesByIndex = {}
 		self.zwaveValuesByLabel = {}
+
+		# condition variable for ready
+		self.readyCondition = Condition()
+		self.readyFlag = False
 			
 	# methods should call this to ensure activation
 	def checkActivation(self):
@@ -156,7 +167,7 @@ class ujouleZWaveNode(object):
 			raise Exception("Node %d is not yet activated..." % self.nodeId)
 	
 	def valueException(self, message, label=None, index=None, value_id=None):
-		raise uJouleZWaveException("Value (label=%s, index=%s, value_id=%s): %s" % (str(label), str(index), str(value_id), message))
+		raise ujouleZWaveException("Value (label=%s, index=%s, value_id=%s): %s" % (str(label), str(index), str(value_id), message))
 	
 	# controller will call this when registered
 	def activate(self, zwaveNetwork, zwaveNode):
@@ -177,20 +188,23 @@ class ujouleZWaveNode(object):
 	def activated(self):
 		pass
 
-	def logValue(self, zwaveValue):
-		fileLabel = zwaveValue.label.replace(" ", "-")
-		with open("data/node%s-%s.dat" % (self.nodeId, fileLabel), "a") as f:
-			unixTimeNow = unix_ts(datetime.now())
-			f.write("%d %s\n" % (unixTimeNow, str(self.getData(zwaveValue.value_id))))
+	def ready(self):
+		# wait on condition
+		self.readyCondition.acquire()
+		while not self.readyFlag:
+			self.readyCondition.wait()
+		self.readyCondition.release()
 
-		with open("data/node%s-%s-raw.dat" % (self.nodeId, fileLabel), "a") as f:
-			unixTimeNow = unix_ts(datetime.now())
-			f.write("%d %s\n" % (unixTimeNow, str(self.getRawData(zwaveValue.value_id))))
+	def signalReady(self):
+		# signal the ready condition
+		self.readyCondition.acquire()
+		self.readyFlag = True
+		self.readyCondition.notify()
+		self.readyCondition.release()
 
 	def notifyValueUpdated(self, zwaveValue):
 		self.logger.debug("received update: node_id: %s, value_id %s, label %s, index=%s, raw data %s, transformed data: %s" % (self.nodeId, zwaveValue.value_id, zwaveValue.label, zwaveValue.index, zwaveValue.data, self.getData(value_id=zwaveValue.value_id)))
 		self.updateTimes[zwaveValue.value_id] = datetime.now()
-		self.logValue(zwaveValue)
 		self.valueUpdated(zwaveValue.label, self.getData(zwaveValue.value_id))
 
 	# subclasses should implement this
@@ -230,11 +244,6 @@ class ujouleZWaveNode(object):
 		self.transforms[value_id] = func
 
 	def getData(self, value_id):
-		# do not return data if we haven't gotten an update yet, as the data
-		# can be stale.
-		#if value_id not in self.updateTimes:
-		#	return None
-
 		zwaveValue = self.zwaveValuesById[value_id]
 		
 		if zwaveValue.is_write_only:
@@ -270,10 +279,11 @@ class ujouleZWaveNode(object):
 		except KeyError:
 			self.valueException("Value never updated", value_id=value_id)
 
-class ZWaveMultisensor(ujouleZWaveNode):
+class ujouleZWaveMultisensor(ujouleZWaveNode):
 	def __init__(self, nodeId, description=None, tempCorrection=0.0):
-		super(ZWaveMultisensor, self).__init__(nodeId, description)
+		super(ujouleZWaveMultisensor, self).__init__(nodeId, description)
 		self.tempCorrection = tempCorrection
+		self.prevTemperature = None
 
 	def activated(self):
 		self.logger.info("Activated multisensor-%d" % self.nodeId)
@@ -295,13 +305,20 @@ class ZWaveMultisensor(ujouleZWaveNode):
 			return float("nan")
 
 	def valueUpdated(self, label, value):
-		pass
+		if label == "Temperature":
+			self.signalReady()
+
+			dispatcher.send(signal=ujouleLouieSignals.SIGNAL_TEMPERATURE_UPDATED, sender=self, value=value)
+
+			if value != self.prevTemperature:
+				self.prevTemperature = value
+				dispatcher.send(signal=ujouleLouieSignals.SIGNAL_TEMPERATURE_CHANGED, sender=self, value=value)
 
 	def getTemperature(self):
 		valueId = self.getValueId(label="Temperature")
 		return self.getData(valueId)
 
-class ZWaveThermostat(ujouleZWaveNode):
+class ujouleZWaveThermostat(ujouleZWaveNode):
 	SYS_MODE_OFF = 0
 	SYS_MODE_HEAT = 1
 	SYS_MODE_COOL = 2
@@ -311,8 +328,9 @@ class ZWaveThermostat(ujouleZWaveNode):
 	FAN_STATE_IDLE = 32
 
 	def __init__(self, nodeId, description=None):
-		super(ZWaveThermostat, self).__init__(nodeId, description)
-	
+		super(ujouleZWaveThermostat, self).__init__(nodeId, description)
+		self.prevTemperature = None
+
 	def activated(self):
 		self.logger.info("Activated thermostat-%d" % self.nodeId)
 		self.getZwaveValue(self.getValueId(label="Temperature")).enable_poll(intensity=4)
@@ -324,25 +342,32 @@ class ZWaveThermostat(ujouleZWaveNode):
 		self.getZwaveValue(self.getValueId(label="Mode")).enable_poll(intensity=4)
 
 	def constToString(self, mode):
-		if mode == ZWaveThermostat.SYS_MODE_OFF:
+		if mode == ujouleZWaveThermostat.SYS_MODE_OFF:
 			return "Off"
-		elif mode == ZWaveThermostat.SYS_MODE_HEAT:
+		elif mode == ujouleZWaveThermostat.SYS_MODE_HEAT:
 			return "On (Heat)"
-		elif mode == ZWaveThermostat.SYS_MODE_COOL:
+		elif mode == ujouleZWaveThermostat.SYS_MODE_COOL:
 			return "On (Cool)"
-		elif mode == ZWaveThermostat.FAN_MODE_AUTO:
-			return "Off"
-		elif mode == ZWaveThermostat.FAN_MODE_ON:
+		elif mode == ujouleZWaveThermostat.FAN_MODE_AUTO:
+			return "Auto"
+		elif mode == ujouleZWaveThermostat.FAN_MODE_ON:
 			return "On"
-		elif mode == ZWaveThermostat.FAN_STATE_RUNNING:
+		elif mode == ujouleZWaveThermostat.FAN_STATE_RUNNING:
 			return "Running"
-		elif mode == ZWaveThermostat.FAN_STATE_IDLE:
+		elif mode == ujouleZWaveThermostat.FAN_STATE_IDLE:
 			return "Idle"
 		else:
 			return "Invalid Mode"
 
 	def valueUpdated(self, label, value):
-		pass
+		if label == "Temperature":
+			self.signalReady()
+
+			dispatcher.send(signal=ujouleLouieSignals.SIGNAL_TEMPERATURE_UPDATED, sender=self, value=value)
+
+			if value != self.prevTemperature:
+				self.prevTemperature = value
+				dispatcher.send(signal=ujouleLouieSignals.SIGNAL_TEMPERATURE_CHANGED, sender=self, value=value)
 
 	def getTemperature(self):
 		valueId = self.getValueId(label="Temperature")
@@ -350,58 +375,74 @@ class ZWaveThermostat(ujouleZWaveNode):
 
 	def setFanMode(self, setting):
 		valueId = self.getValueId(label="Fan Mode")
-		if setting == ZWaveThermostat.FAN_MODE_ON:
+		if setting == ujouleZWaveThermostat.FAN_MODE_ON:
 			self.setData("On Low", valueId)
-		elif setting == ZWaveThermostat.FAN_MODE_AUTO:
+		elif setting == ujouleZWaveThermostat.FAN_MODE_AUTO:
 			self.setData("Auto Low", valueId)
 		else:
-			raise uJouleZWaveException("Invalid fan mode specified: %d" % data)
+			raise ujouleZWaveException("Invalid fan mode specified: %d" % data)
 
 	def getFanMode(self):
 		valueId = self.getValueId(label="Fan Mode")
 		data = self.getData(valueId)
 		if data == "Auto Low":
-			return ZWaveThermostat.FAN_MODE_AUTO
+			return ujouleZWaveThermostat.FAN_MODE_AUTO
 		elif data == "On Low":
-			return ZWaveThermostat.FAN_MODE_ON
+			return ujouleZWaveThermostat.FAN_MODE_ON
 		else:
-			raise uJouleZWaveException("Invalid fan mode received from ZWave: %s" % data)
+			raise ujouleZWaveException("Invalid fan mode received from ZWave: %s" % data)
 
 	def getFanState(self):
 		valueId = self.getValueId(label="Fan State")
 		data = self.getData(valueId)
 		if data == "Running":
-			return ZWaveThermostat.FAN_STATE_RUNNING
+			return ujouleZWaveThermostat.FAN_STATE_RUNNING
 		elif data == "Idle":
-			return ZWaveThermostat.FAN_STATE_IDLE
+			return ujouleZWaveThermostat.FAN_STATE_IDLE
 		else:
-			raise uJouleZWaveException("Invalid fan state received from ZWave: %s" % data)
+			raise ujouleZWaveException("Invalid fan state received from ZWave: %s" % data)
 
 	def setSystemMode(self, setting):
-		if setting == ZWaveThermostat.SYS_MODE_HEAT:
+		if setting == ujouleZWaveThermostat.SYS_MODE_HEAT:
 			modeValueId = self.getValueId(label="Mode")
 			self.setData("Heat", modeValueId)
-			targetValueId = self.getValueId(label="Heating 1")
-			self.setData(temp, 80.0)
-		elif setting == ZWaveThermostat.SYS_MODE_COOL:
+			self.setHeatTarget(80.0)
+		elif setting == ujouleZWaveThermostat.SYS_MODE_COOL:
 			modeValueId = self.getValueId(label="Mode")
 			self.setData("Cool", modeValueId)
-			targetValueId = self.getValueId(label="Cooling 1")
-			self.setData(temp, 60.0)
-		elif setting == ZWaveThermostat.SYS_MODE_OFF:
+			self.setCoolTarget(60.0)
+		elif setting == ujouleZWaveThermostat.SYS_MODE_OFF:
 			modeValueId = self.getValueId(label="Mode")
-			self.setData("Heat", modeValueId)
+			self.setData("Off", modeValueId)
 		else:
-			raise uJouleZWaveException("Invalid system mode specified: %d" % data)
+			raise ujouleZWaveException("Invalid system mode specified: %d" % data)
 
 	def getSystemMode(self):
 		valueId = self.getValueId(label="Mode")
 		data = self.getData(valueId)
 		if data == "Heat":
-			return ZWaveThermostat.SYS_MODE_HEAT
+			return ujouleZWaveThermostat.SYS_MODE_HEAT
 		elif data == "Cool":
-			return ZWaveThermostat.SYS_MODE_COOL
+			return ujouleZWaveThermostat.SYS_MODE_COOL
 		elif data == "Off":
-			return ZWaveThermostat.SYS_MODE_OFF
+			return ujouleZWaveThermostat.SYS_MODE_OFF
 		else:
-			raise uJouleZWaveException("Invalid system mode received from ZWave: %s" % data)
+			raise ujouleZWaveException("Invalid system mode received from ZWave: %s" % data)
+
+	def setHeatTarget(self, target):
+		targetValueId = self.getValueId(label="Heating 1")
+		self.setData(target, targetValueId)
+
+	def getHeatTarget(self):
+		targetValueId = self.getValueId(label="Heating 1")
+		data = self.getData(targetValueId)
+		return data
+
+	def setCoolTarget(self, target):
+		targetValueId = self.getValueId(label="Cooling 1")
+		self.setData(target, targetValueId)
+
+	def getCoolTarget(self):
+		targetValueId = self.getValueId(label="Cooling 1")
+		data = self.getData(targetValueId)
+		return data
