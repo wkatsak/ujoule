@@ -10,7 +10,7 @@ from datetime import timedelta
 from datetime import time as dt_time
 from threading import Thread, Timer, Lock
 from louie import dispatcher
-from common import ujouleLouieSignals, Policy, getLogger
+from common import ujouleLouieSignals, Policy, getLogger, getObjectName
 from zwave import ujouleZWaveThermostat
 from webapis import WeatherUndergroundTemperature, iCloudAwayDetector
 from datacollector import ClimateDataCollector
@@ -85,7 +85,7 @@ class ClimateController(object):
 		self.dataCollector = ClimateDataCollector(self)
 		self.shellImpl = ClimateControllerShell(self)
 
-		self.logger = logging.getLogger("ClimateController")
+		self.logger = getLogger(self)
 
 	def getSensors(self):
 		return list(self.sensors.keys())
@@ -265,7 +265,7 @@ class ClimateController(object):
 		if self.policyTimer:
 			self.policyTimer.cancel()
 
-		self.logger.info("entered executePolicy, caused by %s" % str(sender))
+		self.logger.info("entered executePolicy, caused by %s" % getObjectName(sender))
 
 		# see what time it is and apply the correct configuration
 		nowTime = datetime.now().time()
@@ -309,7 +309,7 @@ class ClimateController(object):
 
 		self.dataCollector.start()
 		self.broadcastParams()
-		self.executePolicy()
+		self.executePolicy(self.start)
 
 	def stop(self):
 		if self.policyTimer:

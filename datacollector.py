@@ -2,7 +2,7 @@
 
 import logging
 import sys
-from common import ujouleLouieSignals
+from common import ujouleLouieSignals, getLogger
 from helpers import unix_ts
 from datetime import datetime
 from louie import dispatcher
@@ -12,7 +12,7 @@ class ClimateDataCollector(object):
 	def __init__(self, controller, dataPath="data"):
 		self.controller = controller
 		self.dataPath = dataPath
-		self.logger = logging.getLogger("ClimateDataCollector")
+		self.logger = getLogger(self)
 
 	def start(self):
 		dispatcher.connect(self.logValue, ujouleLouieSignals.SIGNAL_TEMPERATURE_UPDATED)
@@ -24,7 +24,7 @@ class ClimateDataCollector(object):
 			f.write("%s %0.1f\n" % (timestamp, value))
 
 	def logValue(self, signal, sender, value):
-		self.logger.info("logging value: signal=%d, sender=%s, value=%0.2f" % (signal, sender, value))
+		self.logger.debug("logging value: signal=%d, sender=%s, value=%0.2f" % (signal, sender, value))
 		unixTimeNow = unix_ts(datetime.now())
 
 		if signal == ujouleLouieSignals.SIGNAL_TEMPERATURE_UPDATED:

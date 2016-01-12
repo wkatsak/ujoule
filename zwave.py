@@ -14,7 +14,7 @@ from louie import dispatcher, All
 from helpers import unix_ts
 from threading import Lock, Condition
 from datetime import datetime, timedelta
-from common import ujouleLouieSignals
+from common import ujouleLouieSignals, getLogger
 
 class ujouleZWaveException(Exception):
 	def __init__(self, msg):
@@ -23,7 +23,7 @@ class ujouleZWaveException(Exception):
 # the controller should take care of the zwave network and objects
 class ujouleZWaveController(object):
 	def __init__(self, nodeId, device="/dev/zwave", options=None):
-		self.logger = logging.getLogger("ujouleZWaveController")
+		self.logger = getLogger(self)
 		self.nodeId = nodeId
 
 		# openzwave configuration
@@ -90,15 +90,17 @@ class ujouleZWaveController(object):
 			self.readyCondition.wait()
 		self.readyCondition.release()
 
+		self.logger.info("...ready")
+
 	# louie callbacks for zwave
 	def louie_network_started(self, network):
-		self.logger.info("Network started, homeid %0.8x, found %d nodes" % (network.home_id, network.nodes_count))
+		self.logger.debug("Network started, homeid %0.8x, found %d nodes" % (network.home_id, network.nodes_count))
 
 	def louie_network_failed(self, network):
 		self.logger.error("Network failed to start")
 
 	def louie_network_ready(self, network):
-		self.logger.info("Network ready, %d nodes found, controller is %s" % (network.nodes_count, network.controller))
+		self.logger.debug("Network ready, %d nodes found, controller is %s" % (network.nodes_count, network.controller))
 
 		# register callbacks for node and value updates
 		dispatcher.connect(self.louie_node_update, ZWaveNetwork.SIGNAL_NODE)
@@ -150,7 +152,7 @@ class ujouleZWaveNode(object):
 		self.description = description
 		
 		self.isActivated = False
-		self.logger = logging.getLogger("node-%d" % nodeId)
+		self.logger = getLogger(self)
 		self.transforms = {} # indexed by Id
 		self.updateTimes = {} # indexed by Id
 		self.zwaveValuesById = {}
@@ -286,7 +288,7 @@ class ujouleZWaveMultisensor(ujouleZWaveNode):
 		self.prevTemperature = None
 
 	def activated(self):
-		self.logger.info("Activated multisensor-%d" % self.nodeId)
+		self.logger.debug("Activated multisensor-%d" % self.nodeId)
 		
 		self.registerTransform(self.transformTemperature, value_id=self.getValueId(label="Temperature"))
 		self.setData(240, value_id=self.getValueId(index=3))	# timeout period after motion sensor trigger
@@ -332,7 +334,7 @@ class ujouleZWaveThermostat(ujouleZWaveNode):
 		self.prevTemperature = None
 
 	def activated(self):
-		self.logger.info("Activated thermostat-%d" % self.nodeId)
+		self.logger.debug("Activated thermostat-%d" % self.nodeId)
 		self.getZwaveValue(self.getValueId(label="Temperature")).enable_poll(intensity=4)
 		self.getZwaveValue(self.getValueId(label="Heating 1")).enable_poll(intensity=4)
 		self.getZwaveValue(self.getValueId(label="Cooling 1")).enable_poll(intensity=4)

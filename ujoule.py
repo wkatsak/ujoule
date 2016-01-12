@@ -20,6 +20,8 @@ OFFICE_SENSOR_ID = 4
 
 # configure logger basics
 logging.basicConfig(filename="ujoule.log", level=logging.INFO, format='%(asctime)s %(name)s %(levelname)s: %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
+# supress INFO from requests package
+logging.getLogger("requests").setLevel(logging.WARNING)
 
 # don't print messages to screen
 #logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))

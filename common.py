@@ -1,6 +1,7 @@
 #!/usr/bin/python
 
 import logging
+import inspect
 
 UJOULE_LOUIE_SIGNAL_MAGIC = 32768
 
@@ -20,7 +21,7 @@ class ujouleLouieSignals(object):
 class Policy(object):
 	def __init__(self, controller):
 		self.controller = controller
-		self.logger = logging.getLogger("Policy")
+		self.logger = getLogger(self)
 
 	def execute(self):
 		pass
@@ -28,3 +29,14 @@ class Policy(object):
 class AwayDetector(object):
 	def isAway(self):
 		pass
+
+def getLogger(instance):
+	return logging.getLogger("%s" % instance.__class__.__name__)
+
+def getObjectName(obj):
+	if not obj:
+		return "None"
+	elif inspect.isclass(obj):
+		return obj.__class__.__name__
+	else:
+		return obj.__name__

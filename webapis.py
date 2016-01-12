@@ -8,7 +8,7 @@ import urllib2
 import json
 from threading import Thread
 from pyicloud import PyiCloudService
-from common import AwayDetector, ujouleLouieSignals
+from common import AwayDetector, ujouleLouieSignals, getLogger
 from louie import dispatcher
 
 # based on http://www.pythonforbeginners.com/scraping/scraping-wunderground
@@ -26,7 +26,7 @@ class WeatherUndergroundTemperature(object):
 		t = Thread(target=self.checkThread)
 		t.daemon = True
 		t.start()
-		self.logger = logging.getLogger("WeatherUndergroundTemperature")
+		self.logger = getLogger(self)
 
 	def getTemperature(self):
 		return self.temperature
@@ -76,7 +76,7 @@ class iCloudAwayDetector(AwayDetector):
 		t.daemon = True
 		t.start()
 
-		self.logger = logging.getLogger("iCloudAwayDetector")
+		self.logger = getLogger(self)
 
 	def initConnection(self):
 		self.api = PyiCloudService(self.username, self.password)
