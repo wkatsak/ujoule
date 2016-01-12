@@ -9,7 +9,9 @@ import traceback
 from datetime import datetime, timedelta, time
 
 from zwave import ujouleZWaveController, ujouleZWaveNode, ujouleZWaveMultisensor, ujouleZWaveThermostat
-from climate import ClimateController, SimplePolicy, SimpleBedtimePolicy, iCloudAwayDetector, WeatherUndergroundTemperature, BasicSubsumptionArchPolicy
+from policy import BasicSubsumptionArchPolicy, SubsumptionArchBedtimePolicy
+from climate import ClimateController, ClimateControllerConfig, iCloudAwayDetector, WeatherUndergroundTemperature
+from policy import BasicSubsumptionArchPolicy, SubsumptionArchBedtimePolicy
 
 CONTROLLER_ID = 1
 THERMOSTAT_ID = 2
@@ -54,10 +56,10 @@ if __name__ == "__main__":
 	}
 	outsideSensor = WeatherUndergroundTemperature()
 
-	climateController = ClimateController(zwaveThermostat, insideSensors, outsideSensor)
-
-	climateController.setDefaultPolicy(BasicSubsumptionArchPolicy)
-	#climateController.addPolicy(SimpleBedtimePolicy, (time(hour=19, minute=45), time(hour=7)))
+	defaultConfig = ClimateControllerConfig(policy=BasicSubsumptionArchPolicy, setpoint=74.0)
+	climateController = ClimateController(zwaveThermostat, insideSensors, outsideSensor, defaultConfig=defaultConfig)
+	climateController.addScheduledConfig(ClimateControllerConfig(policy=SubsumptionArchBedtimePolicy, setpoint=71.0), startTime=time(hour=20, minute=00), endTime=time(hour=5))
+	#climateController.addScheduledConfig(ClimateControllerConfig(policy=SubsumptionArchBedtimePolicy, setpoint=77.0), startTime=time(hour=9, minute=50), endTime=time(hour=10))
 
 	billDetector = iCloudAwayDetector("wkatsak@cs.rutgers.edu", "Bill1085")
 	firuzaDetector = iCloudAwayDetector("firuzaa8@gmail.com", "Bill1085")
