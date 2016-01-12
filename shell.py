@@ -73,7 +73,10 @@ class ClimateControllerShell(object):
 		return True
 
 	def shell(self):
-		print "uJoule Climate Controller Shell"
+		print "uJoule Climate Control System Shell"
+		print "Copyright (C) 2015, 2016 William Katsak"
+		print ""
+
 		keepGoing = True
 		prevCmd = None
 		prevArgs = None
