@@ -22,6 +22,8 @@ OFFICE_SENSOR_ID = 4
 logging.basicConfig(filename="ujoule.log", level=logging.INFO, format='%(asctime)s %(name)s %(levelname)s: %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
 # supress INFO from requests package
 logging.getLogger("requests").setLevel(logging.WARNING)
+# main logger
+logger = logging.getLogger("ujoule")
 
 # don't print messages to screen
 #logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
@@ -32,6 +34,11 @@ def sigint(signum, other):
 	sys.exit()
 
 if __name__ == "__main__":
+	logger.info("")
+	logger.info("uJoule Climate Control System")
+	logger.info("Copyright (C) 2015, 2016 William Katsak")
+	logger.info("Initializing...")
+
 	signal.signal(signal.SIGINT, sigint)
 
 	# initialize zwave stuff
