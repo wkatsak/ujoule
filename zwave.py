@@ -408,11 +408,9 @@ class ujouleZWaveThermostat(ujouleZWaveNode):
 		if setting == ujouleZWaveThermostat.SYS_MODE_HEAT:
 			modeValueId = self.getValueId(label="Mode")
 			self.setData("Heat", modeValueId)
-			self.setHeatTarget(80.0)
 		elif setting == ujouleZWaveThermostat.SYS_MODE_COOL:
 			modeValueId = self.getValueId(label="Mode")
 			self.setData("Cool", modeValueId)
-			self.setCoolTarget(60.0)
 		elif setting == ujouleZWaveThermostat.SYS_MODE_OFF:
 			modeValueId = self.getValueId(label="Mode")
 			self.setData("Off", modeValueId)

@@ -5,6 +5,7 @@ import sys
 import time
 import math
 import numpy
+import sqlitedict
 from datetime import datetime
 from datetime import timedelta
 from datetime import time as dt_time
@@ -35,12 +36,16 @@ class ClimateControllerState(object):
 			self.systemSetTime = None
 			self.fanMode = ujouleZWaveThermostat.FAN_MODE_AUTO
 			self.fanSetTime = None
+			self.heatSetpoint = None
+			self.coolSetpoint = None
 			self.vars = {}
 		else:
 			self.systemMode = orig.systemMode
 			self.systemSetTime = orig.systemSetTime
 			self.fanMode = orig.fanMode
 			self.fanSetTime = orig.fanSetTime
+			self.heatSetpoint = orig.heatSetpoint
+			self.coolSetpoint = orig.coolSetpoint
 			self.vars = dict(orig.vars)
 
 	def getCustomState(self, varName):
@@ -60,7 +65,7 @@ class ClimateControllerState(object):
 
 class ClimateController(object):
 	# sensors is a dictionary by location
-	def __init__(self, thermostat, sensors, outsideSensor, defaultConfig):
+	def __init__(self, thermostat, sensors, outsideSensor, defaultConfig=None):
 		self.thermostat = thermostat
 		self.sensors = sensors
 		self.outsideSensor = outsideSensor
@@ -69,6 +74,7 @@ class ClimateController(object):
 		self.defaultConfig = defaultConfig
 		self.scheduledConfigs = []
 		self.scheduledConfigTimes = {}
+		self.override = False
 
 		self.awayDetectors = {}
 
@@ -84,6 +90,8 @@ class ClimateController(object):
 
 		self.dataCollector = ClimateDataCollector(self)
 		self.shellImpl = ClimateControllerShell(self)
+
+		self.configDict = sqlitedict.SqliteDict("ujoule-config.sqlite", autocommit=True)
 
 		self.logger = getLogger(self)
 
@@ -161,7 +169,6 @@ class ClimateController(object):
 
 	def setDefaultConfig(self, config):
 		self.defaultConfig = config
-		self.instantiatePolicy(policy)
 
 	def addScheduledConfig(self, config, startTime, endTime):
 		for conf in self.scheduledConfigTimes:
@@ -177,8 +184,32 @@ class ClimateController(object):
 
 		self.scheduledConfigs.sort(key=lambda x : self.scheduledConfigTimes[x])
 
+	def removeScheduledConfig(self, index):
+		self.scheduledConfigs.pop(index)
+
 	def getScheduledConfigs(self):
 		return list(self.scheduledConfigs)
+
+	def saveConfig(self):
+		self.configDict["defaultConfig"] = self.defaultConfig
+		self.configDict["scheduledConfig"] = self.scheduledConfigs
+		self.configDict["scheduledConfigTimes"] = self.scheduledConfigTimes
+		self.configDict.commit()
+
+	def loadConfig(self):
+		try:
+			self.defaultConfig = self.configDict["defaultConfig"]
+			self.scheduledConfigs = self.configDict["scheduledConfig"]
+			self.scheduledConfigTimes = self.configDict["scheduledConfigTimes"]
+		except KeyError:
+			self.defaultConfig = None
+			self.scheduledConfigs = []
+			self.scheduledConfigTimes = {}
+
+		self.applyConfig(self.defaultConfig)
+
+	def getScheduledConfigTimes(self):
+		return dict(self.scheduledConfigTimes)
 
 	def addAwayDetector(self, name, detector):
 		self.awayDetectors[name] = detector
@@ -196,6 +227,16 @@ class ClimateController(object):
 
 	def getSetpoint(self):
 		return self.setpoint
+
+	def overrideEnable(self):
+		self.policyLock.acquire()
+		self.override = True
+		self.policyLock.release()
+
+	def overrideDisable(self):
+		self.policyLock.acquire()
+		self.override = False
+		self.policyLock.release()
 
 	def away(self):
 		for name in self.awayDetectors:
@@ -255,6 +296,27 @@ class ClimateController(object):
 				config = self.getConfigByTime(t)
 				print "At time %s, config is %s" % (t, config)
 
+	def updateState(self, nextState):
+		if nextState.fanMode != self.currentState.fanMode:
+			nextState.fanSetTime = datetime.now()
+			self.logger.info("Setting fan mode to %s" % self.thermostat.constToString(nextState.fanMode))
+			self.thermostat.setFanMode(nextState.fanMode)
+
+		if nextState.systemMode != self.currentState.systemMode:
+			nextState.systemSetTime = datetime.now()
+			self.logger.info("Setting system mode to %s" % self.thermostat.constToString(nextState.systemMode))
+			self.thermostat.setSystemMode(nextState.systemMode)
+
+		if nextState.heatSetpoint != self.currentState.heatSetpoint:
+			self.logger.info("Setting thermostat heat setpoint to %0.2f" % nextState.heatSetpoint)
+			self.thermostat.setHeatTarget(nextState.heatSetpoint)
+
+		if nextState.coolSetpoint != self.currentState.coolSetpoint:
+			self.logger.info("Setting thermostat cool setpoint to %0.2f" % nextState.coolSetpoint)
+			self.thermostat.setCoolTarget(nextState.coolSetpoint)
+
+		self.currentState = nextState
+
 	def executePolicy(self, sender=None):
 		# try to obtain the lock, if we cannot, someone else is already executing
 		# the policy, so no sense in doing it again
@@ -267,32 +329,28 @@ class ClimateController(object):
 
 		self.logger.info("entered executePolicy, caused by %s" % getObjectName(sender))
 
-		# see what time it is and apply the correct configuration
-		nowTime = datetime.now().time()
-		config = self.getConfigByTime(nowTime)
-		self.logger.info("applying config: %s" % config)
-		self.applyConfig(config)
+		if self.override:
+			self.logger.info("override enabled, no policy execution will occur, exiting...")
+		else:
+			# see what time it is and apply the correct configuration
+			nowTime = datetime.now().time()
+			config = self.getConfigByTime(nowTime)
+			if config:
+				self.logger.info("applying config: %s" % config)
+				self.applyConfig(config)
 
-		# execute the configured policy
-		policyInstance = self.getPolicyInstance(self.policy)
-		nextState = policyInstance.execute()
+				# execute the configured policy
+				policyInstance = self.getPolicyInstance(self.policy)
+				nextState = policyInstance.execute()
 
-		# use whatever is set in the nextState to configure the system
-		if nextState.fanMode != self.currentState.fanMode:
-			nextState.fanSetTime = datetime.now()
-			self.logger.info("Setting fan mode to %s" % self.thermostat.constToString(nextState.fanMode))
-			self.thermostat.setFanMode(nextState.fanMode)
+				# use whatever is set in the nextState to configure the system
+				self.updateState(nextState)
 
-		if nextState.systemMode != self.currentState.systemMode:
-			nextState.systemSetTime = datetime.now()
-			self.logger.info("Setting system mode to %s" % self.thermostat.constToString(nextState.systemMode))
-			self.thermostat.setSystemMode(nextState.systemMode)
-
-		self.currentState = nextState
-
-		# set up a timer to guarantee we rerun in 240s
-		self.policyTimer = Timer(240.0, self.executePolicy, [Timer])
-		self.policyTimer.start()
+				# set up a timer to guarantee we rerun in 240s
+				self.policyTimer = Timer(240.0, self.executePolicy, [Timer])
+				self.policyTimer.start()
+			else:
+				self.logger.info("no config found, cannot do anything")
 
 		self.logger.info("finished executePolicy")
 
@@ -307,6 +365,8 @@ class ClimateController(object):
 		dispatcher.connect(self.executePolicy, ujouleLouieSignals.SIGNAL_SETPOINT_CHANGED)
 		dispatcher.connect(self.executePolicy, ujouleLouieSignals.SIGNAL_AWAY_STATE_CHANGED)
 
+		#self.loadConfig()
+
 		self.dataCollector.start()
 		self.broadcastParams()
 		self.executePolicy(self.start)
@@ -317,11 +377,13 @@ class ClimateController(object):
 		if self.broadcastTimer:
 			self.broadcastTimer.cancel()
 
+		#self.saveConfig()
+
 		self.thermostat.setSystemMode(ujouleZWaveThermostat.SYS_MODE_OFF)
 		self.thermostat.setFanMode(ujouleZWaveThermostat.FAN_MODE_AUTO)
 
 	def shell(self):
-		self.shellImpl.shell()
+		self.shellImpl.cmdloop()
 
 
 if __name__ == "__main__":

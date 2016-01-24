@@ -29,10 +29,10 @@ class BasicSubsumptionArchPolicy(SubsumptionArchPolicy):
 	def __init__(self, controller):
 		super(BasicSubsumptionArchPolicy, self).__init__(controller)
 		self.policies =	[
-			self.tempLow,
-			self.tempHigh,
-			self.somewhereHighByTwo,
-			self.somewhereLowByThree,
+			self.heatOn,
+			self.heatOff,
+			#self.somewhereHighByTwo,
+			#self.somewhereLowByThree,
 			self.heatOffInterval,
 			self.heatOnInterval,
 			self.fanAfterHeat,
@@ -48,27 +48,29 @@ class BasicSubsumptionArchPolicy(SubsumptionArchPolicy):
 		self.logger.info("using referenceTemp=%0.1f" % self.getReferenceTemp())
 		return super(BasicSubsumptionArchPolicy, self).execute()
 
-	def tempLow(self, currentState, nextState):
-		if self.getReferenceTemp() < self.controller.getSetpoint() - 0.5:
-			self.logger.info("tempLow tripped")
+	def heatOn(self, currentState, nextState):
+		if self.getReferenceTemp() <= self.controller.getSetpoint() - 1.0 and currentState.systemMode == ujouleZWaveThermostat.SYS_MODE_OFF:
+			self.logger.info("heatOn tripped")
 			nextState.systemMode = ujouleZWaveThermostat.SYS_MODE_HEAT
 			nextState.fanMode = ujouleZWaveThermostat.FAN_MODE_AUTO
+			nextState.heatSetpoint = 80.0
 
-	def tempHigh(self, currentState, nextState):
-		if self.getReferenceTemp() >= self.controller.getSetpoint():
-			self.logger.info("tempHigh tripped")
+	def heatOff(self, currentState, nextState):
+		if self.getReferenceTemp() >= self.controller.getSetpoint() and currentState.systemMode == ujouleZWaveThermostat.SYS_MODE_HEAT:
+			self.logger.info("heatOff tripped")
 			nextState.systemMode = ujouleZWaveThermostat.SYS_MODE_OFF
 
 	def somewhereHighByTwo(self, currentState, nextState):
-		if self.controller.tempMax() >= self.controller.getSetpoint() + 2.0:
+		if self.controller.tempMax() >= self.controller.getSetpoint() + 2.0 and currentState.systemMode == ujouleZWaveThermostat.SYS_MODE_HEAT:
 			self.logger.info("somewhereHighByTwo tripped")
 			nextState.systemMode = ujouleZWaveThermostat.SYS_MODE_OFF
 
 	def somewhereLowByThree(self, currentState, nextState):
-		if self.controller.tempMin() < self.controller.getSetpoint() - 3.0:
+		if self.controller.tempMin() < self.controller.getSetpoint() - 3.0 and currentState.systemMode == ujouleZWaveThermostat.SYS_MODE_OFF:
 			self.logger.info("somewhereLowByThree tripped")
 			nextState.systemMode = ujouleZWaveThermostat.SYS_MODE_HEAT
 			nextState.fanMode = ujouleZWaveThermostat.FAN_MODE_AUTO
+			nextState.heatSetpoint = 80.0
 
 	def heatOffInterval(self, currentState, nextState):
 		if nextState.systemMode == ujouleZWaveThermostat.SYS_MODE_HEAT and currentState.systemMode == ujouleZWaveThermostat.SYS_MODE_OFF:
@@ -105,13 +107,20 @@ class BasicSubsumptionArchPolicy(SubsumptionArchPolicy):
 			nextState.systemMode = ujouleZWaveThermostat.SYS_MODE_OFF
 			nextState.fanMode = ujouleZWaveThermostat.FAN_MODE_AUTO
 
+class SubsumptionArchDaytimePolicy(BasicSubsumptionArchPolicy):
+	def __init__(self, controller):
+		super(SubsumptionArchDaytimePolicy, self).__init__(controller)
+
+	def getReferenceTemp(self):
+		return self.controller.tempMean(locations=["livingroom"])
+
 class SubsumptionArchBedtimePolicy(BasicSubsumptionArchPolicy):
 	def __init__(self, controller):
 		super(SubsumptionArchBedtimePolicy, self).__init__(controller)
 
 		self.policies =	[
-			self.tempLow,
-			self.tempHigh,
+			self.heatOn,
+			self.heatOff,
 			self.heatOffInterval,
 			self.heatOnInterval,
 			self.fanAfterHeat,

@@ -34,9 +34,14 @@ def getLogger(instance):
 	return logging.getLogger("%s" % instance.__class__.__name__)
 
 def getObjectName(obj):
+
+	return str(obj)
+
+	'''
 	if not obj:
 		return "None"
 	elif inspect.isclass(obj):
 		return obj.__class__.__name__
 	else:
 		return obj.__name__
+	'''
