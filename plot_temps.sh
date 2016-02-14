@@ -1,0 +1,12 @@
+#!/bin/bash
+
+HOURS=48
+
+python lastnhrs.py "data/sensor-livingroom.dat" $HOURS
+python lastnhrs.py "data/sensor-bedroom.dat" $HOURS
+python lastnhrs.py "data/sensor-office.dat" $HOURS
+python lastnhrs.py "data/setpoint.dat" $HOURS
+python lastnhrs.py "data/sensor-outside.dat" $HOURS
+
+gnuplot plot_temps.plot
+xdg-open temps.png
