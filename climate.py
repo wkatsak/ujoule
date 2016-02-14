@@ -5,7 +5,6 @@ import sys
 import time
 import math
 import numpy
-import sqlitedict
 from datetime import datetime
 from datetime import timedelta
 from datetime import time as dt_time
@@ -90,8 +89,6 @@ class ClimateController(object):
 
 		self.dataCollector = ClimateDataCollector(self)
 		self.shellImpl = ClimateControllerShell(self)
-
-		self.configDict = sqlitedict.SqliteDict("ujoule-config.sqlite", autocommit=True)
 
 		self.logger = getLogger(self)
 
