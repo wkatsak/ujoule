@@ -251,6 +251,15 @@ class ClimateController(object):
 			self.broadcastTimer.cancel()
 
 		dispatcher.send(signal=ujouleLouieSignals.SIGNAL_SETPOINT_UPDATED, sender=self.broadcastParams, value=self.setpoint)
+
+		dispatcher.send(signal=ujouleLouieSignals.SIGNAL_FAN_ON_UPDATED,
+							sender=self.broadcastParams,
+							value=True if self.currentState.fanMode == ujouleZWaveThermostat.FAN_MODE_ON else False)
+
+		dispatcher.send(signal=ujouleLouieSignals.SIGNAL_HEAT_ON_UPDATED,
+							sender=self.broadcastParams,
+							value=True if self.currentState.systemMode == ujouleZWaveThermostat.SYS_MODE_HEAT else False)
+
 		# set up a timer
 		self.broadcastTimer = Timer(60.0, self.broadcastParams)
 		self.broadcastTimer.start()
@@ -299,10 +308,18 @@ class ClimateController(object):
 			self.logger.info("Setting fan mode to %s" % self.thermostat.constToString(nextState.fanMode))
 			self.thermostat.setFanMode(nextState.fanMode)
 
+			dispatcher.send(signal=ujouleLouieSignals.SIGNAL_FAN_ON_CHANGED,
+							sender=self.updateState,
+							value=True if nextState.fanMode == ujouleZWaveThermostat.FAN_MODE_ON else False)
+
 		if nextState.systemMode != self.currentState.systemMode:
 			nextState.systemSetTime = datetime.now()
 			self.logger.info("Setting system mode to %s" % self.thermostat.constToString(nextState.systemMode))
 			self.thermostat.setSystemMode(nextState.systemMode)
+
+			dispatcher.send(signal=ujouleLouieSignals.SIGNAL_HEAT_ON_CHANGED,
+							sender=self.updateState,
+							value=True if nextState.systemMode == ujouleZWaveThermostat.SYS_MODE_HEAT else False)
 
 		if nextState.heatSetpoint != self.currentState.heatSetpoint:
 			self.logger.info("Setting thermostat heat setpoint to %0.2f" % nextState.heatSetpoint)

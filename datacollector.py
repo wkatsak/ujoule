@@ -18,6 +18,10 @@ class ClimateDataCollector(object):
 		dispatcher.connect(self.logValue, ujouleLouieSignals.SIGNAL_TEMPERATURE_UPDATED)
 		dispatcher.connect(self.logValue, ujouleLouieSignals.SIGNAL_OUTSIDE_TEMPERATURE_UPDATED)
 		dispatcher.connect(self.logValue, ujouleLouieSignals.SIGNAL_SETPOINT_UPDATED)
+		dispatcher.connect(self.logValue, ujouleLouieSignals.SIGNAL_FAN_ON_UPDATED)
+		dispatcher.connect(self.logValue, ujouleLouieSignals.SIGNAL_FAN_ON_CHANGED)
+		dispatcher.connect(self.logValue, ujouleLouieSignals.SIGNAL_HEAT_ON_UPDATED)
+		dispatcher.connect(self.logValue, ujouleLouieSignals.SIGNAL_HEAT_ON_CHANGED)
 
 	def writeFile(self, filename, timestamp, value):
 		with open(filename, "a") as f:
@@ -47,4 +51,12 @@ class ClimateDataCollector(object):
 
 		elif signal == ujouleLouieSignals.SIGNAL_AWAY_STATE_UPDATED:
 			logFile = "%s/away.dat" % (self.dataPath)
+			self.writeFile(logFile, unixTimeNow, 1 if value else 0)
+
+		elif signal == ujouleLouieSignals.SIGNAL_FAN_ON_UPDATED or signal == ujouleLouieSignals.SIGNAL_FAN_ON_CHANGED:
+			logFile = "%s/fan.dat" % (self.dataPath)
+			self.writeFile(logFile, unixTimeNow, 1 if value else 0)
+
+		elif signal == ujouleLouieSignals.SIGNAL_HEAT_ON_UPDATED or signal == ujouleLouieSignals.SIGNAL_HEAT_ON_CHANGED:
+			logFile = "%s/heat.dat" % (self.dataPath)
 			self.writeFile(logFile, unixTimeNow, 1 if value else 0)
