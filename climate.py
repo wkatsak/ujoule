@@ -236,6 +236,9 @@ class ClimateController(object):
 		self.policyLock.release()
 
 	def away(self):
+		if len(self.awayDetectors) == 0:
+			return False
+
 		for name in self.awayDetectors:
 			detector = self.awayDetectors[name]
 			if not detector.isAway():
