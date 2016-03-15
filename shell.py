@@ -150,3 +150,6 @@ class ClimateControllerShell(cmd.Cmd):
 	def do_defaultpolicy(self, args):
 		pass
 
+	def do_ipython(self, args):
+		from IPython import embed
+		embed()
