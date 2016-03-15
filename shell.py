@@ -97,6 +97,8 @@ class ClimateControllerShell(cmd.Cmd):
 		elif tokens[0] == "mode":
 			if len(tokens) >= 2 and tokens[1] == "heat":
 				nextState.systemMode = zwave.ujouleZWaveThermostat.SYS_MODE_HEAT
+			elif len(tokens) >= 2 and tokens[1] == "cool":
+				nextState.systemMode = zwave.ujouleZWaveThermostat.SYS_MODE_COOL
 			elif len(args) >= 2 and tokens[1] == "off":
 				nextState.systemMode = zwave.ujouleZWaveThermostat.SYS_MODE_OFF
 			else:
