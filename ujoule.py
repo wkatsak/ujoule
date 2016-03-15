@@ -71,8 +71,11 @@ if __name__ == "__main__":
 
 	billDetector = iCloudAwayDetector("wkatsak@cs.rutgers.edu", "Bill1085")
 	firuzaDetector = iCloudAwayDetector("firuzaa8@gmail.com", "Bill1085")
+	arturDetector = iCloudAwayDetector("abramyan62@icloud.com", "Artur1962")
+
 	climateController.addAwayDetector("Bill", billDetector)
 	climateController.addAwayDetector("Firuza", firuzaDetector)
+	climateController.addAwayDetector("Artur", arturDetector)
 
 	climateController.start()
 	climateController.shell()
