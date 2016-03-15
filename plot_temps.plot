@@ -10,7 +10,11 @@ set timefmt "%s"
 set format x "%H:%M"
 set xdata time
 
-plot "data/sensor-livingroom-last.dat" using 1:2 with lines axes x1y1, \
+#set style rect fc lt -1 fs solid 0.15 noborder
+set style rect fc lt -1 fs solid
+load "heat-rects.gp"
+
+plot "data/sensor-livingroom-last.dat" using 1:($2) with lines axes x1y1, \
 	"data/sensor-bedroom-last.dat" using 1:($2) with lines axes x1y1, \
 	"data/sensor-office-last.dat" using 1:($2) with lines axes x1y1, \
 	"data/setpoint-last.dat" using 1:($2) with lines axes x1y1, \
