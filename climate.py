@@ -155,6 +155,9 @@ class ClimateController(object):
 		maxTemp = numpy.max(temps)
 		return maxTemp
 
+	def tempOutside(self):
+		return self.outsideSensor.getTemperature()
+
 	def getPolicyInstance(self, policy):
 		if policy not in self.policyInstances:
 			self.policyInstances[policy] = policy(self)
