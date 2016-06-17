@@ -1,5 +1,7 @@
 #!/usr/bin/python
 
+import sys
+import traceback
 import logging
 import openzwave
 from openzwave.node import ZWaveNode
@@ -144,7 +146,7 @@ class ujouleZWaveController(object):
 					registeredNode.notifyValueUpdated(value)
 		except Exception as e:
 			print "Exception", e
-			traceback.print_exc()
+			traceback.print_exc(file=sys.stdout)
 
 class ujouleZWaveNode(object):
 	def __init__(self, nodeId, description=None):
@@ -179,7 +181,7 @@ class ujouleZWaveNode(object):
 			self.zwaveValuesById[value_id] = value
 			self.zwaveValuesByIndex[value.index] = value
 			self.zwaveValuesByLabel[value.label] = value
-			self.logger.debug("value: %s" % value)
+			self.logger.debug("value: %s, index: %s, label: %s" % (value, value.index, value.label))
 		
 		self.activated()
 		
@@ -246,8 +248,12 @@ class ujouleZWaveNode(object):
 		self.transforms[value_id] = func
 
 	def getData(self, value_id):
-		zwaveValue = self.zwaveValuesById[value_id]
-		
+		try:
+			zwaveValue = self.zwaveValuesById[value_id]
+		except Exception as e:
+			self.logger.info("exception getting data, returning -1.0")
+			return -1.0
+
 		if zwaveValue.is_write_only:
 			self.valueException("Write only value", value_id=value_id)
 		
@@ -286,15 +292,20 @@ class ujouleZWaveMultisensor(ujouleZWaveNode):
 		super(ujouleZWaveMultisensor, self).__init__(nodeId, description)
 		self.tempCorrection = tempCorrection
 		self.prevTemperature = None
+		self.prevRelativeHumidity = None
 
 	def activated(self):
-		self.logger.debug("Activated multisensor-%d" % self.nodeId)
-		
 		self.registerTransform(self.transformTemperature, value_id=self.getValueId(label="Temperature"))
-		self.setData(240, value_id=self.getValueId(index=3))	# timeout period after motion sensor trigger
-		self.setData("True", value_id=self.getValueId(index=4))	# enable PIR motion sensor
-		self.setData(224, value_id=self.getValueId(index=101))	# Set sensors to be reported
-		self.setData(240, value_id=self.getValueId(index=111))	# Set reporting interval
+		try:
+			self.setData(240, value_id=self.getValueId(index=3))	# timeout period after motion sensor trigger
+			#self.setData("True", value_id=self.getValueId(index=4))	# enable PIR motion sensor
+			self.setData(224, value_id=self.getValueId(index=101))	# Set sensors to be reported
+			self.setData(240, value_id=self.getValueId(index=111))	# Set reporting interval
+		except Exception as e:
+			self.logger.debug("Problem activating multisensor-%d" % self.nodeId)
+			return
+
+		self.logger.debug("Activated multisensor-%d" % self.nodeId)
 
 	# only report temperatures at 0.5 degree boundaries
 	def transformTemperature(self, temperature):
@@ -316,8 +327,19 @@ class ujouleZWaveMultisensor(ujouleZWaveNode):
 				self.prevTemperature = value
 				dispatcher.send(signal=ujouleLouieSignals.SIGNAL_TEMPERATURE_CHANGED, sender=self, value=value)
 
+		elif label == "Relative Humidity":
+			dispatcher.send(signal=ujouleLouieSignals.SIGNAL_RELATIVE_HUMIDITY_UPDATED, sender=self, value=value)
+
+			if value != self.prevRelativeHumidity:
+				self.prevRelativeHumidity = value
+				dispatcher.send(signal=ujouleLouieSignals.SIGNAL_RELATIVE_HUMIDITY_CHANGED, sender=self, value=value)
+
 	def getTemperature(self):
 		valueId = self.getValueId(label="Temperature")
+		return self.getData(valueId)
+
+	def getRelativeHumidity(self):
+		valueId = self.getValueId(label="Relative Humidity")
 		return self.getData(valueId)
 
 class ujouleZWaveThermostat(ujouleZWaveNode):
@@ -336,6 +358,10 @@ class ujouleZWaveThermostat(ujouleZWaveNode):
 	def activated(self):
 		self.logger.debug("Activated thermostat-%d" % self.nodeId)
 		self.getZwaveValue(self.getValueId(label="Temperature")).enable_poll(intensity=4)
+
+		#self.getZwaveValue(self.getValueId(label="Unknown1")).enable_poll(intensity=4)
+		#self.getZwaveValue(self.getValueId(label="Unknown2")).enable_poll(intensity=4)
+
 		self.getZwaveValue(self.getValueId(label="Heating 1")).enable_poll(intensity=4)
 		self.getZwaveValue(self.getValueId(label="Cooling 1")).enable_poll(intensity=4)
 		self.getZwaveValue(self.getValueId(label="Fan State")).enable_poll(intensity=4)
@@ -374,6 +400,9 @@ class ujouleZWaveThermostat(ujouleZWaveNode):
 	def getTemperature(self):
 		valueId = self.getValueId(label="Temperature")
 		return self.getData(valueId)
+
+	def getRelativeHumidity(self):
+		return float("nan")
 
 	def setFanMode(self, setting):
 		valueId = self.getValueId(label="Fan Mode")

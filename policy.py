@@ -77,13 +77,14 @@ class SubsumptionArchBasicPolicy(SubsumptionArchPolicy):
 			nextState.systemMode = ujouleZWaveThermostat.SYS_MODE_OFF
 			nextState.fanMode = ujouleZWaveThermostat.FAN_MODE_AUTO
 
-class SubsumptionArchSwitchingPolicy(SubsumptionArchBasicPolicy):
+class CoolingPolicy(SubsumptionArchBasicPolicy):
 
 	def __init__(self, controller):
-		super(SubsumptionArchSwitchingPolicy, self).__init__(controller)
+		super(CoolingPolicy, self).__init__(controller)
+
 		self.policies =	[
-			self.systemOn,
-			self.systemOff,
+			self.coolOn,
+			self.coolOff,
 			self.systemOffInterval,
 			self.systemOnInterval,
 			self.fanAfterSystem,
@@ -91,36 +92,6 @@ class SubsumptionArchSwitchingPolicy(SubsumptionArchBasicPolicy):
 			self.fanOff,
 			self.away
 		]
-
-		self.heatThreshold = 70.0
-
-	def systemOn(self, currentState, nextState):
-		if self.controller.tempOutside() < self.heatThreshold:
-			self.logger.info("systemOn: selecting heat")
-			return self.heatOn(currentState, nextState)
-		else:
-			self.logger.info("systemOn: selecting cool")
-			return self.coolOn(currentState, nextState)
-
-	def systemOff(self, currentState, nextState):
-		if self.controller.tempOutside() < self.heatThreshold:
-			self.logger.info("systemOff: selecting heat")
-			return self.heatOff(currentState, nextState)
-		else:
-			self.logger.info("systemOff: selecting cool")
-			return self.coolOff(currentState, nextState)
-
-	def heatOn(self, currentState, nextState):
-		if self.getReferenceTemp() <= self.controller.getSetpoint() - 1.0 and currentState.systemMode == ujouleZWaveThermostat.SYS_MODE_OFF:
-			self.logger.info("heatOn tripped")
-			nextState.systemMode = ujouleZWaveThermostat.SYS_MODE_HEAT
-			nextState.fanMode = ujouleZWaveThermostat.FAN_MODE_AUTO
-			nextState.heatSetpoint = 80.0
-
-	def heatOff(self, currentState, nextState):
-		if self.getReferenceTemp() >= self.controller.getSetpoint() and currentState.systemMode == ujouleZWaveThermostat.SYS_MODE_HEAT:
-			self.logger.info("heatOff tripped")
-			nextState.systemMode = ujouleZWaveThermostat.SYS_MODE_OFF
 
 	def coolOn(self, currentState, nextState):
 		if self.getReferenceTemp() >= self.controller.getSetpoint() + 1.0 and currentState.systemMode == ujouleZWaveThermostat.SYS_MODE_OFF:
@@ -134,16 +105,59 @@ class SubsumptionArchSwitchingPolicy(SubsumptionArchBasicPolicy):
 			self.logger.info("coolOff tripped")
 			nextState.systemMode = ujouleZWaveThermostat.SYS_MODE_OFF
 
-class SubsumptionArchDaytimeSwitchingPolicy(SubsumptionArchSwitchingPolicy):
+
+class HeatingPolicy(SubsumptionArchBasicPolicy):
+
 	def __init__(self, controller):
-		super(SubsumptionArchDaytimeSwitchingPolicy, self).__init__(controller)
+		super(HeatingPolicy, self).__init__(controller)
+
+		self.policies =	[
+			self.heatOn,
+			self.heatOff,
+			self.systemOffInterval,
+			self.systemOnInterval,
+			self.fanAfterSystem,
+			#self.fanCirculate,
+			self.fanOff,
+			self.away
+		]
+
+	def heatOn(self, currentState, nextState):
+		if self.getReferenceTemp() <= self.controller.getSetpoint() - 1.0 and currentState.systemMode == ujouleZWaveThermostat.SYS_MODE_OFF:
+			self.logger.info("heatOn tripped")
+			nextState.systemMode = ujouleZWaveThermostat.SYS_MODE_HEAT
+			nextState.fanMode = ujouleZWaveThermostat.FAN_MODE_AUTO
+			nextState.heatSetpoint = 80.0
+
+	def heatOff(self, currentState, nextState):
+		if self.getReferenceTemp() >= self.controller.getSetpoint() and currentState.systemMode == ujouleZWaveThermostat.SYS_MODE_HEAT:
+			self.logger.info("heatOff tripped")
+			nextState.systemMode = ujouleZWaveThermostat.SYS_MODE_OFF
+
+class CoolingDaytimePolicy(CoolingPolicy):
+	def __init__(self, controller):
+		super(CoolingDaytimePolicy, self).__init__(controller)
 
 	def getReferenceTemp(self):
 		return self.controller.tempMean(locations=["livingroom"])
 
-class SubsumptionArchBedtimeSwitchingPolicy(SubsumptionArchSwitchingPolicy):
+class CoolingBedtimePolicy(CoolingPolicy):
 	def __init__(self, controller):
-		super(SubsumptionArchBedtimeSwitchingPolicy, self).__init__(controller)
+		super(CoolingBedtimePolicy, self).__init__(controller)
+
+	def getReferenceTemp(self):
+		return self.controller.tempMean(locations=["bedroom"])
+
+class HeatingDaytimePolicy(HeatingPolicy):
+	def __init__(self, controller):
+		super(HeatingDaytimePolicy, self).__init__(controller)
+
+	def getReferenceTemp(self):
+		return self.controller.tempMean(locations=["livingroom"])
+
+class HeatingBedtimePolicy(HeatingPolicy):
+	def __init__(self, controller):
+		super(HeatingBedtimePolicy, self).__init__(controller)
 
 	def getReferenceTemp(self):
 		return self.controller.tempMean(locations=["bedroom"])

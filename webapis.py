@@ -12,7 +12,7 @@ from common import AwayDetector, ujouleLouieSignals, getLogger
 from louie import dispatcher
 
 # based on http://www.pythonforbeginners.com/scraping/scraping-wunderground
-class WeatherUndergroundTemperature(object):
+class WeatherUndergroundService(object):
 	apiKey = "912fc499d4de6771"
 	state = "NJ"
 	city = "North_Brunswick"
@@ -21,7 +21,9 @@ class WeatherUndergroundTemperature(object):
 	def __init__(self, updateInterval=240):
 		self.updateInterval = updateInterval
 		self.temperature = float("nan")
+		self.relativeHumidity = float("nan")
 		self.prevTemperature = None
+		self.prevRelativeHumidity = None
 
 		t = Thread(target=self.checkThread)
 		t.daemon = True
@@ -30,6 +32,9 @@ class WeatherUndergroundTemperature(object):
 
 	def getTemperature(self):
 		return self.temperature
+
+	def getRelativeHumidity(self):
+		return self.relativeHumidity
 
 	def checkThread(self):
 		while True:
@@ -41,7 +46,9 @@ class WeatherUndergroundTemperature(object):
 
 				parsed_json = json.loads(json_string)
 				temp_f = parsed_json["current_observation"]["temp_f"]
+				relative_humidity = float(parsed_json["current_observation"]["relative_humidity"].replace("%", "").strip())
 				self.temperature = temp_f
+				self.relativeHumidity = relative_humidity
 
 				if temp_f != self.prevTemperature:
 					self.prevTemperature = temp_f
@@ -49,9 +56,16 @@ class WeatherUndergroundTemperature(object):
 
 				dispatcher.send(signal=ujouleLouieSignals.SIGNAL_OUTSIDE_TEMPERATURE_UPDATED, sender=self, value=temp_f)
 
+				if relative_humidity != self.prevRelativeHumidity:
+					self.prevRelativeHumidity = relative_humidity
+					dispatcher.send(signal=ujouleLouieSignals.SIGNAL_OUTSIDE_RELATIVE_HUMIDITY_CHANGED, sender=self, value=relative_humidity)
+
+				dispatcher.send(signal=ujouleLouieSignals.SIGNAL_OUTSIDE_RELATIVE_HUMIDITY_UPDATED, sender=self, value=relative_humidity)
+
 			except Exception as e:
-				self.logger.error("Exception getting temperature from weather underground: %s" % str(e))
+				self.logger.error("Exception getting data from weather underground: %s" % str(e))
 				self.temperature = float("nan")
+				self.relativeHumidity = float("nan")
 
 			time.sleep(self.updateInterval)
 

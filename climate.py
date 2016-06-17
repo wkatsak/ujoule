@@ -12,7 +12,7 @@ from threading import Thread, Timer, Lock
 from louie import dispatcher
 from common import ujouleLouieSignals, Policy, getLogger, getObjectName
 from zwave import ujouleZWaveThermostat
-from webapis import WeatherUndergroundTemperature, iCloudAwayDetector
+from webapis import WeatherUndergroundService, iCloudAwayDetector
 from datacollector import ClimateDataCollector
 from shell import ClimateControllerShell
 
@@ -63,22 +63,49 @@ class ClimateControllerState(object):
 		return self.__str__()
 
 class ClimateController(object):
+	MODE_AUTO = "MODE_AUTO"
+	MODE_HEAT = "MODE_HEAT"
+	MODE_COOL = "MODE_COOL"
+
 	# sensors is a dictionary by location
-	def __init__(self, thermostat, sensors, outsideSensor, defaultConfig=None):
+	def __init__(self, thermostat, sensors, outsideSensor, mode=None, autoCoolThreshold=None):
+		self.logger = getLogger(self)
+
 		self.thermostat = thermostat
 		self.sensors = sensors
 		self.outsideSensor = outsideSensor
 
 		self.policyInstances = {}
-		self.defaultConfig = defaultConfig
-		self.scheduledConfigs = []
+
+		self.defaultConfigs = {}
+		self.defaultConfigs[ClimateController.MODE_HEAT] = None
+		self.defaultConfigs[ClimateController.MODE_COOL] = None
+
+		self.scheduledConfigs = {}
+		self.scheduledConfigs[ClimateController.MODE_HEAT] = []
+		self.scheduledConfigs[ClimateController.MODE_COOL] = []
+
 		self.scheduledConfigTimes = {}
+		self.scheduledConfigTimes[ClimateController.MODE_HEAT] = {}
+		self.scheduledConfigTimes[ClimateController.MODE_COOL] = {}
+
+		if not mode:
+			mode = ClimateController.MODE_AUTO
+
+		if mode == ClimateController.MODE_AUTO:
+			if not autoCoolThreshold:
+				raise Exception("autoCoolThreshold must be set with mode=MODE_AUTO...")
+			self.coolThreshold = autoCoolThreshold
+
+		self.mode = mode
+
 		self.override = False
 
 		self.awayDetectors = {}
 
-		self.policy = defaultConfig.policy
-		self.setpoint = defaultConfig.setpoint
+		#mode = self.getMode()
+		self.policy = None
+		self.setpoint = 0.0
 
 		self.currentState = ClimateControllerState()
 
@@ -89,8 +116,6 @@ class ClimateController(object):
 
 		self.dataCollector = ClimateDataCollector(self)
 		self.shellImpl = ClimateControllerShell(self)
-
-		self.logger = getLogger(self)
 
 	def getSensors(self):
 		return list(self.sensors.keys())
@@ -167,29 +192,36 @@ class ClimateController(object):
 	def getCurrentState(self):
 		return self.currentState
 
-	def setDefaultConfig(self, config):
-		self.defaultConfig = config
+	def setAutoCoolTreshold(self, threshold):
+		self.coolThreshold = threshold
 
-	def addScheduledConfig(self, config, startTime, endTime):
-		for conf in self.scheduledConfigTimes:
-			start, end = self.scheduledConfigTimes[conf]
+	def setDefaultConfig(self, mode, config):
+		self.defaultConfigs[mode] = config
+
+	def addScheduledConfig(self, mode, config, startTime, endTime):
+		for conf in self.scheduledConfigTimes[mode]:
+			start, end = self.scheduledConfigTimes[mode][conf]
 			tmp = datetime(year=1970, month=1, day=1, hour=end.hour, minute=end.minute, second=end.second) - timedelta(milliseconds=1)
 			end = tmp.time()
 
 			if self.timeBetween(start, startTime, endTime) or self.timeBetween(end, startTime, endTime):
 				raise Exception("Cannot add config, conflicts with existing schedule...")
 
-		self.scheduledConfigs.append(config)
-		self.scheduledConfigTimes[config] = (startTime, endTime)
+		self.scheduledConfigs[mode].append(config)
+		self.scheduledConfigTimes[mode][config] = (startTime, endTime)
 
-		self.scheduledConfigs.sort(key=lambda x : self.scheduledConfigTimes[x])
+		self.scheduledConfigs[mode].sort(key=lambda x : self.scheduledConfigTimes[mode][x])
 
-	def removeScheduledConfig(self, index):
-		self.scheduledConfigs.pop(index)
+	def removeScheduledConfig(self, mode, index):
+		self.scheduledConfigs[mode].pop(index)
 
-	def getScheduledConfigs(self):
-		return list(self.scheduledConfigs)
+	def getScheduledConfigs(self, mode):
+		return list(self.scheduledConfigs[mode])
 
+	def getScheduledConfigTimes(self, mode):
+		return dict(self.scheduledConfigTimes[mode])
+
+	'''
 	def saveConfig(self):
 		self.configDict["defaultConfig"] = self.defaultConfig
 		self.configDict["scheduledConfig"] = self.scheduledConfigs
@@ -207,17 +239,22 @@ class ClimateController(object):
 			self.scheduledConfigTimes = {}
 
 		self.applyConfig(self.defaultConfig)
-
-	def getScheduledConfigTimes(self):
-		return dict(self.scheduledConfigTimes)
+	'''
 
 	def addAwayDetector(self, name, detector):
 		self.awayDetectors[name] = detector
 
 	def setPolicy(self, policy):
+		# if the policy has changed
 		if policy != self.policy:
-			dispatcher.send(signal=ujouleLouieSignals.SIGNAL_POLICY_CHANGED, sender=self.setPolicy, value=policy)
+			# change it
 			self.policy = policy
+
+			# Reset the system to avoid an indeterminate state
+			self.updateState(ClimateControllerState())
+
+			# send a signal
+			dispatcher.send(signal=ujouleLouieSignals.SIGNAL_POLICY_CHANGED, sender=self.setPolicy, value=policy)
 
 	def setSetpoint(self, setpoint):
 		if setpoint != self.setpoint:
@@ -283,17 +320,39 @@ class ClimateController(object):
 		return False
 
 	# find the currently valid config
-	def getConfigByTime(self, targetTime):
-		targetConfig = self.defaultConfig
+	def getConfigByTime(self, mode, targetTime):
+		targetConfig = self.defaultConfigs[mode]
 
-		for config in self.scheduledConfigs:
-			start, end = self.scheduledConfigTimes[config]
+		for config in self.scheduledConfigs[mode]:
+			start, end = self.scheduledConfigTimes[mode][config]
 
 			if self.timeBetween(targetTime, start, end):
 				targetConfig = config
 				break
 
 		return targetConfig
+
+	def getMode(self):
+		# see what mode we are supposed to be in
+		if self.mode == ClimateController.MODE_HEAT:
+			self.logger.info("In MODE_HEAT, using heat configs...")
+			mode = self.mode
+		elif self.mode == ClimateController.MODE_COOL:
+			self.logger.info("In MODE_COOL, using cool configs...")
+			mode = self.mode
+		else:
+			self.logger.info("In MODE_AUTO, selecting configs based on outside temperature...")
+			if self.tempOutside() >= self.coolThreshold:
+				self.logger.info("Outside >= %0.2f F, using cool configs..." % self.coolThreshold)
+				mode = ClimateController.MODE_COOL
+			else:
+				self.logger.info("Outside < %0.2f F, using heat configs..." % self.coolThreshold)
+				mode = ClimateController.MODE_HEAT
+
+		return mode
+
+	def setMode(self, mode):
+		self.mode = mode
 
 	def applyConfig(self, config):
 		self.setPolicy(config.policy)
@@ -327,11 +386,11 @@ class ClimateController(object):
 							sender=self.updateState,
 							value=True if nextState.systemMode == ujouleZWaveThermostat.SYS_MODE_HEAT else False)
 
-		if nextState.heatSetpoint != self.currentState.heatSetpoint:
+		if nextState.heatSetpoint and nextState.heatSetpoint != self.currentState.heatSetpoint:
 			self.logger.info("Setting thermostat heat setpoint to %0.2f" % nextState.heatSetpoint)
 			self.thermostat.setHeatTarget(nextState.heatSetpoint)
 
-		if nextState.coolSetpoint != self.currentState.coolSetpoint:
+		if nextState.coolSetpoint and nextState.coolSetpoint != self.currentState.coolSetpoint:
 			self.logger.info("Setting thermostat cool setpoint to %0.2f" % nextState.coolSetpoint)
 			self.thermostat.setCoolTarget(nextState.coolSetpoint)
 
@@ -352,9 +411,10 @@ class ClimateController(object):
 		if self.override:
 			self.logger.info("override enabled, no policy execution will occur, exiting...")
 		else:
-			# see what time it is and apply the correct configuration
+			# find the current mode and time and apply the correct configuration
+			mode = self.getMode()
 			nowTime = datetime.now().time()
-			config = self.getConfigByTime(nowTime)
+			config = self.getConfigByTime(mode, nowTime)
 			if config:
 				self.logger.info("applying config: %s" % config)
 				self.applyConfig(config)

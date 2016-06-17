@@ -22,6 +22,8 @@ class ClimateDataCollector(object):
 		dispatcher.connect(self.logValue, ujouleLouieSignals.SIGNAL_FAN_ON_CHANGED)
 		dispatcher.connect(self.logValue, ujouleLouieSignals.SIGNAL_HEAT_ON_UPDATED)
 		dispatcher.connect(self.logValue, ujouleLouieSignals.SIGNAL_HEAT_ON_CHANGED)
+		dispatcher.connect(self.logValue, ujouleLouieSignals.SIGNAL_RELATIVE_HUMIDITY_UPDATED)
+		dispatcher.connect(self.logValue, ujouleLouieSignals.SIGNAL_RELATIVE_HUMIDITY_CHANGED)
 
 	def writeFile(self, filename, timestamp, value):
 		with open(filename, "a") as f:
@@ -60,3 +62,13 @@ class ClimateDataCollector(object):
 		elif signal == ujouleLouieSignals.SIGNAL_HEAT_ON_UPDATED or signal == ujouleLouieSignals.SIGNAL_HEAT_ON_CHANGED:
 			logFile = "%s/heat.dat" % (self.dataPath)
 			self.writeFile(logFile, unixTimeNow, 1 if value else 0)
+
+		elif signal == ujouleLouieSignals.SIGNAL_RELATIVE_HUMIDITY_UPDATED:
+			foundSensor = None
+			for sensor in self.controller.sensors:
+				if self.controller.sensors[sensor] == sender:
+					foundSensor = sensor
+					break
+			if foundSensor:
+				logFile = "%s/sensor-relative-humidity-%s.dat" % (self.dataPath, foundSensor)
+				self.writeFile(logFile, unixTimeNow, value)
