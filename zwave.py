@@ -361,6 +361,7 @@ class ujouleZWaveThermostat(ujouleZWaveNode):
 
 		#self.getZwaveValue(self.getValueId(label="Unknown1")).enable_poll(intensity=4)
 		#self.getZwaveValue(self.getValueId(label="Unknown2")).enable_poll(intensity=4)
+		self.getZwaveValue(self.getValueId(label="Indicator")).enable_poll(intensity=4)
 
 		self.getZwaveValue(self.getValueId(label="Heating 1")).enable_poll(intensity=4)
 		self.getZwaveValue(self.getValueId(label="Cooling 1")).enable_poll(intensity=4)

@@ -3,6 +3,9 @@
 import logging
 import inspect
 
+# common reference to controller for flask
+controller = None
+
 UJOULE_LOUIE_SIGNAL_MAGIC = 2**32
 
 class ujouleLouieSignals(object):

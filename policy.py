@@ -7,6 +7,17 @@ from common import ujouleLouieSignals, Policy
 from climate import ClimateControllerState
 from zwave import ujouleZWaveThermostat
 
+class SystemOffPolicy(Policy):
+	def __init__(self, controller):
+		super(SystemOffPolicy, self).__init__(controller)
+
+	def execute(self):
+		nextState = ClimateControllerState()
+		nextState.systemMode = ujouleZWaveThermostat.SYS_MODE_OFF
+		nextState.fanMode = ujouleZWaveThermostat.FAN_MODE_AUTO
+
+		return nextState
+
 class SubsumptionArchPolicy(Policy):
 
 	def __init__(self, controller):

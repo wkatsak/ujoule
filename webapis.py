@@ -93,13 +93,19 @@ class iCloudAwayDetector(AwayDetector):
 		self.logger = getLogger(self)
 
 	def initConnection(self):
-		self.api = PyiCloudService(self.username, self.password)
-		self.iphone = None
+		while True:
+			try:
+				self.api = PyiCloudService(self.username, self.password)
+				self.iphone = None
 
-		for device in self.api.devices:
-			if device.data["deviceClass"] == "iPhone":
-				self.iphone = device
-				break
+				for device in self.api.devices:
+					if device.data["deviceClass"] == "iPhone":
+						self.iphone = device
+						break
+				return
+			except Exception as e:
+				self.logger.info("Error initing connection: %s" % e)
+				time.sleep(60)
 
 	# From: http://www.johndcook.com/blog/python_longitude_latitude/
 	def distance_on_unit_sphere(self, lat1, long1, lat2, long2):
